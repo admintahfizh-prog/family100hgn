@@ -3,11 +3,12 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   onSnapshot,
   query,
-  runTransaction,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
   where,
   limit,
@@ -15,13 +16,37 @@ import {
 import { db, handleFirestoreError, OperationType } from '../firebase.ts';
 import { useFirebaseAuth } from '../contexts/FirebaseAuthContext.tsx';
 import type { GameState, MatchRecord, StageDocument } from '../types/game.ts';
-import { applyGameAction, createInitialStageDocument } from '../services/stageEngine.ts';
+import {
+  applyGameAction,
+  createInitialStageDocument,
+  isStageMetadataComplete,
+  normalizeGameState,
+} from '../services/stageEngine.ts';
 
 export type SyncStatus = 'idle' | 'connecting' | 'connected' | 'error';
 
 interface UseFirestoreStageOptions {
   requestedStageId?: string | null;
 }
+
+const GAMEPLAY_SYNC_KEYS: (keyof GameState)[] = [
+  'phase',
+  'currentQuestionIndex',
+  'revealedAnswerIds',
+  'activeTeamId',
+  'roundMultiplier',
+  'teams',
+  'isPaused',
+  'soundEnabled',
+  'questionOrder',
+  'completedQuestionIds',
+  'roundPots',
+  'showTrivia',
+  'showWinnerModal',
+  'timer',
+  'lottery',
+  'lastEvent',
+];
 
 export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions = {}) {
   const { user, isAuthReady } = useFirebaseAuth();
@@ -32,6 +57,7 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
   const [status, setStatus] = useState<SyncStatus>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const stageDocRef = useRef<StageDocument | null>(null);
+  const creatingStageRef = useRef<string | null>(null);
 
   useEffect(() => {
     stageDocRef.current = stageDoc;
@@ -56,6 +82,8 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
       async (snapshot) => {
         if (!snapshot.exists()) {
           if (effectiveStageId === user.uid) {
+            if (creatingStageRef.current === effectiveStageId) return;
+            creatingStageRef.current = effectiveStageId;
             try {
               const initial = createInitialStageDocument(user.uid, '2511');
               await setDoc(docRef, {
@@ -67,6 +95,8 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
               setStatus('error');
               setErrorMessage('Gagal membuat panggung game di Firestore.');
               handleFirestoreError(err, OperationType.CREATE, stagePath);
+            } finally {
+              creatingStageRef.current = null;
             }
           } else {
             setStatus('error');
@@ -77,7 +107,19 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
           return;
         }
 
-        const data = snapshot.data() as StageDocument;
+        const raw = snapshot.data() as Record<string, unknown>;
+        const normalizedState = normalizeGameState(raw);
+        const data: StageDocument = {
+          ...normalizedState,
+          ownerId: typeof raw.ownerId === 'string' ? raw.ownerId : effectiveStageId,
+          mcPin: typeof raw.mcPin === 'string' && /^\d{4,6}$/.test(raw.mcPin) ? raw.mcPin : '2511',
+          allowedEmails: Array.isArray(raw.allowedEmails)
+            ? raw.allowedEmails.filter((e): e is string => typeof e === 'string').slice(0, 10)
+            : [],
+          updatedBy: typeof raw.updatedBy === 'string' ? raw.updatedBy : effectiveStageId,
+          createdAt: raw.createdAt,
+          updatedAt: raw.updatedAt,
+        };
         setStageDoc(data);
         setStatus('connected');
         setErrorMessage(null);
@@ -134,35 +176,59 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
       const stagePath = `stages/${effectiveStageId}`;
       const docRef = doc(db, 'stages', effectiveStageId);
 
+      let raw: Record<string, unknown> | null = null;
       try {
-        await runTransaction(db, async (tx) => {
-          const snap = await tx.get(docRef);
-          if (!snap.exists()) return;
-          const current = snap.data() as StageDocument;
-          const nextGameState = applyGameAction(current, action, payload);
-          if (!nextGameState) return;
+        const snap = await getDoc(docRef);
+        if (!snap.exists()) return;
+        raw = snap.data() as Record<string, unknown>;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.GET, stagePath);
+      }
 
-          tx.update(docRef, {
-            phase: nextGameState.phase,
-            currentQuestionIndex: nextGameState.currentQuestionIndex,
-            revealedAnswerIds: nextGameState.revealedAnswerIds,
-            activeTeamId: nextGameState.activeTeamId,
-            roundMultiplier: nextGameState.roundMultiplier,
-            teams: nextGameState.teams,
-            isPaused: nextGameState.isPaused,
-            soundEnabled: nextGameState.soundEnabled,
-            questionOrder: nextGameState.questionOrder,
-            completedQuestionIds: nextGameState.completedQuestionIds,
-            roundPots: nextGameState.roundPots,
-            showTrivia: nextGameState.showTrivia,
-            showWinnerModal: nextGameState.showWinnerModal,
-            timer: nextGameState.timer,
-            lottery: nextGameState.lottery,
-            lastEvent: nextGameState.lastEvent,
+      if (!raw) return;
+
+      const normalizedCurrent = normalizeGameState(raw);
+      const nextGameState = applyGameAction(normalizedCurrent, action, payload);
+      if (!nextGameState) return;
+
+      try {
+        if (!isStageMetadataComplete(raw) && raw.ownerId === user.uid) {
+          const safePin =
+            typeof raw.mcPin === 'string' && /^\d{4,6}$/.test(raw.mcPin) ? raw.mcPin : '2511';
+          const safeEmails = Array.isArray(raw.allowedEmails)
+            ? raw.allowedEmails
+                .filter((e): e is string => typeof e === 'string' && e.trim().length > 0)
+                .map((e) => e.trim().toLowerCase().slice(0, 120))
+                .slice(0, 10)
+            : [];
+          const hasValidCreatedAt = raw.createdAt instanceof Timestamp;
+
+          await setDoc(docRef, {
+            ...nextGameState,
+            ownerId: user.uid,
+            mcPin: safePin,
+            allowedEmails: safeEmails,
             updatedBy: user.uid,
+            createdAt: hasValidCreatedAt ? raw.createdAt : serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
-        });
+          return;
+        }
+
+        const patch: Record<string, unknown> = {
+          updatedBy: user.uid,
+          updatedAt: serverTimestamp(),
+        };
+
+        for (const key of GAMEPLAY_SYNC_KEYS) {
+          const prevSerialized = JSON.stringify(raw[key] ?? null);
+          const nextSerialized = JSON.stringify(nextGameState[key] ?? null);
+          if (!(key in raw) || prevSerialized !== nextSerialized) {
+            patch[key] = nextGameState[key];
+          }
+        }
+
+        await updateDoc(docRef, patch);
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, stagePath);
       }
@@ -229,7 +295,7 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
         teamBName: teamB.name.slice(0, 80),
         teamBScore: Math.max(0, Math.trunc(teamB.score)),
         winnerName: winnerName.slice(0, 80),
-        totalQuestionsPlayed: Math.min(200, current.completedQuestionIds.length),
+        totalQuestionsPlayed: Math.min(200, (current.completedQuestionIds ?? []).length),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });

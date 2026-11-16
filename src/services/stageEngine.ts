@@ -105,28 +105,240 @@ export function getLiveTimerSeconds(timer: GameState['timer']): number {
   return Math.max(0, Math.trunc(timer.secondsLeft) - Math.max(0, elapsedSec));
 }
 
+function clampInt(val: unknown, min: number, max: number, fallback: number): number {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(num)));
+}
+
+function normalizeTeam(raw: unknown, id: 'teamA' | 'teamB', fallbackName: string, fallbackColor: string) {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    id,
+    name: clampString(typeof obj.name === 'string' ? obj.name : '', 80, fallbackName),
+    color: clampString(typeof obj.color === 'string' ? obj.color : '', 20, fallbackColor).padEnd(4, '0').slice(0, 20),
+    score: clampInt(obj.score, 0, 1000000, 0),
+    strikes: clampInt(obj.strikes, 0, 3, 0),
+    roundWins: clampInt(obj.roundWins, 0, 1000, 0),
+  };
+}
+
+function normalizeIntArray(raw: unknown, maxLen: number, minVal = 0, maxVal = 10000): number[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((v) => Number(v))
+    .filter((v) => Number.isFinite(v))
+    .map((v) => Math.max(minVal, Math.min(maxVal, Math.trunc(v))))
+    .slice(0, maxLen);
+}
+
+export const STAGE_REQUIRED_KEYS = [
+  'ownerId',
+  'mcPin',
+  'allowedEmails',
+  'phase',
+  'currentQuestionIndex',
+  'revealedAnswerIds',
+  'activeTeamId',
+  'roundMultiplier',
+  'teams',
+  'isPaused',
+  'soundEnabled',
+  'questionOrder',
+  'completedQuestionIds',
+  'roundPots',
+  'showTrivia',
+  'showWinnerModal',
+  'timer',
+  'lottery',
+  'lastEvent',
+  'updatedBy',
+  'createdAt',
+  'updatedAt',
+] as const;
+
+function isFirestoreTimestampLike(val: unknown): boolean {
+  return Boolean(
+    val &&
+      typeof val === 'object' &&
+      typeof (val as { toMillis?: unknown }).toMillis === 'function'
+  );
+}
+
+export function isStageMetadataComplete(raw: Record<string, unknown>): boolean {
+  for (const key of STAGE_REQUIRED_KEYS) {
+    if (!(key in raw)) return false;
+  }
+  for (const key of Object.keys(raw)) {
+    if (!(STAGE_REQUIRED_KEYS as readonly string[]).includes(key)) return false;
+  }
+  if (typeof raw.ownerId !== 'string' || raw.ownerId.length < 1 || raw.ownerId.length > 128) return false;
+  if (typeof raw.updatedBy !== 'string' || raw.updatedBy.length < 1 || raw.updatedBy.length > 128) return false;
+  if (typeof raw.mcPin !== 'string' || !/^\d{4,6}$/.test(raw.mcPin)) return false;
+  if (!Array.isArray(raw.allowedEmails) || raw.allowedEmails.length > 10) return false;
+  if (raw.allowedEmails.length > 0 && (typeof raw.allowedEmails[0] !== 'string' || raw.allowedEmails[0].length > 120)) {
+    return false;
+  }
+  if (!isFirestoreTimestampLike(raw.createdAt) || !isFirestoreTimestampLike(raw.updatedAt)) return false;
+  if (raw.phase !== 'INTRO' && raw.phase !== 'PLAYING' && raw.phase !== 'SUMMARY') return false;
+  if (typeof raw.currentQuestionIndex !== 'number' || !Number.isInteger(raw.currentQuestionIndex) || raw.currentQuestionIndex < 0 || raw.currentQuestionIndex > 200) return false;
+  if (!Array.isArray(raw.revealedAnswerIds) || raw.revealedAnswerIds.length > 10) return false;
+  if (raw.revealedAnswerIds.length > 0 && !Number.isInteger(raw.revealedAnswerIds[0])) return false;
+  if (raw.activeTeamId !== 'teamA' && raw.activeTeamId !== 'teamB') return false;
+  if (raw.roundMultiplier !== 1 && raw.roundMultiplier !== 2) return false;
+  if (typeof raw.isPaused !== 'boolean' || typeof raw.soundEnabled !== 'boolean') return false;
+  if (!Array.isArray(raw.questionOrder) || raw.questionOrder.length < 1 || raw.questionOrder.length > 200 || !Number.isInteger(raw.questionOrder[0])) return false;
+  if (!Array.isArray(raw.completedQuestionIds) || raw.completedQuestionIds.length > 200) return false;
+  if (raw.completedQuestionIds.length > 0 && !Number.isInteger(raw.completedQuestionIds[0])) return false;
+  if (typeof raw.roundPots !== 'number' || !Number.isInteger(raw.roundPots) || raw.roundPots < 0 || raw.roundPots > 100000) return false;
+  if (typeof raw.showTrivia !== 'boolean' || typeof raw.showWinnerModal !== 'boolean') return false;
+
+  const teams = raw.teams as Record<string, unknown> | undefined;
+  if (!teams || typeof teams !== 'object' || Object.keys(teams).length !== 2 || !teams.teamA || !teams.teamB) return false;
+  for (const [expectedId, tRaw] of [
+    ['teamA', teams.teamA],
+    ['teamB', teams.teamB],
+  ] as const) {
+    const t = tRaw as Record<string, unknown>;
+    if (!t || typeof t !== 'object' || Object.keys(t).length !== 6) return false;
+    if (t.id !== expectedId) return false;
+    if (typeof t.name !== 'string' || t.name.length < 1 || t.name.length > 80) return false;
+    if (typeof t.color !== 'string' || t.color.length < 4 || t.color.length > 20) return false;
+    if (typeof t.score !== 'number' || !Number.isInteger(t.score) || t.score < 0 || t.score > 1000000) return false;
+    if (typeof t.strikes !== 'number' || !Number.isInteger(t.strikes) || t.strikes < 0 || t.strikes > 3) return false;
+    if (typeof t.roundWins !== 'number' || !Number.isInteger(t.roundWins) || t.roundWins < 0 || t.roundWins > 1000) return false;
+  }
+
+  const timer = raw.timer as Record<string, unknown> | undefined;
+  if (!timer || typeof timer !== 'object') return false;
+  const timerKeys = Object.keys(timer);
+  if (!timerKeys.every((k) => ['isOpen', 'secondsLeft', 'isRunning', 'startedAtMs'].includes(k))) return false;
+  if (
+    typeof timer.isOpen !== 'boolean' ||
+    typeof timer.secondsLeft !== 'number' ||
+    !Number.isInteger(timer.secondsLeft) ||
+    timer.secondsLeft < 0 ||
+    timer.secondsLeft > 300 ||
+    typeof timer.isRunning !== 'boolean'
+  ) {
+    return false;
+  }
+  if (
+    'startedAtMs' in timer &&
+    timer.startedAtMs !== null &&
+    (typeof timer.startedAtMs !== 'number' || !Number.isInteger(timer.startedAtMs) || timer.startedAtMs < 0)
+  ) {
+    return false;
+  }
+
+  const lottery = raw.lottery as Record<string, unknown> | undefined;
+  if (!lottery || typeof lottery !== 'object' || Object.keys(lottery).length !== 3) return false;
+  if (typeof lottery.isOpen !== 'boolean' || typeof lottery.isSpinning !== 'boolean') return false;
+  if (lottery.winner !== null && lottery.winner !== 'teamA' && lottery.winner !== 'teamB') return false;
+
+  if (raw.lastEvent !== null) {
+    const ev = raw.lastEvent as Record<string, unknown>;
+    if (!ev || typeof ev !== 'object') return false;
+    const evKeys = Object.keys(ev);
+    if (
+      !evKeys.every((k) =>
+        ['id', 'type', 'sound', 'teamId', 'teamName', 'amount', 'strikeCount', 'confetti'].includes(k)
+      )
+    ) {
+      return false;
+    }
+    if (typeof ev.id !== 'string' || ev.id.length < 1 || ev.id.length > 64) return false;
+    if (
+      typeof ev.type !== 'string' ||
+      ![
+        'ANSWER_REVEALED',
+        'STRIKE_ADDED',
+        'ALL_REVEALED',
+        'QUESTION_CHANGED',
+        'SOUNDBOARD',
+        'TIMER_TICK',
+        'TIMER_END',
+        'LOTTERY_WIN',
+        'GAME_STARTED',
+        'GAME_RESET',
+      ].includes(ev.type)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function normalizeGameState(prevState: Partial<GameState> | Record<string, unknown>): GameState {
+  const raw = prevState as Record<string, unknown>;
+  const defaultOrder = INITIAL_QUESTIONS.map((_, i) => i);
+  const parsedOrder = normalizeIntArray(raw.questionOrder, 200, 0, INITIAL_QUESTIONS.length - 1);
+  const questionOrder = parsedOrder.length > 0 ? parsedOrder : defaultOrder;
+
+  const rawTeams = (raw.teams && typeof raw.teams === 'object' ? raw.teams : {}) as Record<string, unknown>;
+  const rawTimer = (raw.timer && typeof raw.timer === 'object' ? raw.timer : {}) as Record<string, unknown>;
+  const rawLottery = (raw.lottery && typeof raw.lottery === 'object' ? raw.lottery : {}) as Record<string, unknown>;
+
+  const startedAtRaw = rawTimer.startedAtMs;
+  const startedAtMs =
+    startedAtRaw === null || startedAtRaw === undefined || !Number.isFinite(Number(startedAtRaw))
+      ? null
+      : Math.max(0, Math.trunc(Number(startedAtRaw)));
+
+  const rawLastEvent = raw.lastEvent as GameEvent | null | undefined;
+  let lastEvent: GameEvent | null = null;
+  if (rawLastEvent && typeof rawLastEvent === 'object' && typeof rawLastEvent.id === 'string' && typeof rawLastEvent.type === 'string') {
+    lastEvent = {
+      id: rawLastEvent.id.slice(0, 64) || makeEventId(),
+      type: rawLastEvent.type,
+      ...(rawLastEvent.sound !== undefined ? { sound: rawLastEvent.sound } : {}),
+      ...(rawLastEvent.teamId !== undefined ? { teamId: rawLastEvent.teamId } : {}),
+      ...(rawLastEvent.teamName !== undefined ? { teamName: clampString(String(rawLastEvent.teamName), 80, 'Tim') } : {}),
+      ...(rawLastEvent.amount !== undefined ? { amount: clampInt(rawLastEvent.amount, 0, 10000, 0) } : {}),
+      ...(rawLastEvent.strikeCount !== undefined ? { strikeCount: clampInt(rawLastEvent.strikeCount, 0, 3, 0) } : {}),
+      ...(rawLastEvent.confetti !== undefined ? { confetti: Boolean(rawLastEvent.confetti) } : {}),
+    };
+  }
+
+  return {
+    phase: raw.phase === 'PLAYING' || raw.phase === 'SUMMARY' ? raw.phase : 'INTRO',
+    currentQuestionIndex: clampInt(raw.currentQuestionIndex, 0, Math.max(0, questionOrder.length - 1), 0),
+    revealedAnswerIds: normalizeIntArray(raw.revealedAnswerIds, 10, 0, 10000),
+    activeTeamId: raw.activeTeamId === 'teamB' ? 'teamB' : 'teamA',
+    roundMultiplier: Number(raw.roundMultiplier) === 2 ? 2 : 1,
+    teams: {
+      teamA: normalizeTeam(rawTeams.teamA, 'teamA', 'Tim Ki Hajar Dewantara', '#3B82F6'),
+      teamB: normalizeTeam(rawTeams.teamB, 'teamB', 'Tim R.A. Kartini', '#EF4444'),
+    },
+    isPaused: Boolean(raw.isPaused),
+    soundEnabled: raw.soundEnabled === undefined ? true : Boolean(raw.soundEnabled),
+    questionOrder,
+    completedQuestionIds: normalizeIntArray(raw.completedQuestionIds, 200, 0, 10000),
+    roundPots: clampInt(raw.roundPots, 0, 100000, 0),
+    showTrivia: Boolean(raw.showTrivia),
+    showWinnerModal: Boolean(raw.showWinnerModal),
+    timer: {
+      isOpen: Boolean(rawTimer.isOpen),
+      secondsLeft: clampInt(rawTimer.secondsLeft, 0, 300, 10),
+      isRunning: Boolean(rawTimer.isRunning),
+      startedAtMs,
+    },
+    lottery: {
+      isOpen: Boolean(rawLottery.isOpen),
+      isSpinning: Boolean(rawLottery.isSpinning),
+      winner: rawLottery.winner === 'teamA' || rawLottery.winner === 'teamB' ? rawLottery.winner : null,
+    },
+    lastEvent,
+  };
+}
+
 export function applyGameAction(
   prevState: GameState,
   action: string,
   payload: Record<string, unknown> = {}
 ): GameState | null {
-  const state: GameState = {
-    ...prevState,
-    teams: {
-      teamA: { ...prevState.teams.teamA },
-      teamB: { ...prevState.teams.teamB },
-    },
-    timer: {
-      isOpen: prevState.timer.isOpen,
-      secondsLeft: prevState.timer.secondsLeft,
-      isRunning: prevState.timer.isRunning,
-      startedAtMs: prevState.timer.startedAtMs ?? null,
-    },
-    lottery: { ...prevState.lottery },
-    revealedAnswerIds: [...prevState.revealedAnswerIds],
-    questionOrder: [...prevState.questionOrder],
-    completedQuestionIds: [...prevState.completedQuestionIds],
-  };
+  const state = normalizeGameState(prevState);
 
   const currentQ = getCurrentQuestion(state);
 

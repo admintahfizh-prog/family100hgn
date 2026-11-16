@@ -31,6 +31,8 @@ service cloud.firestore {
         || (
           'email' in request.auth.token
           && request.auth.token.email is string
+          && 'allowedEmails' in data
+          && data.allowedEmails is list
           && request.auth.token.email in data.allowedEmails
         );
     }
@@ -176,7 +178,10 @@ service cloud.firestore {
         && isValidStage(incoming())
         && isStageAuthorized(existing())
         && incoming().ownerId == existing().ownerId
-        && incoming().createdAt == existing().createdAt
+        && (
+          ('createdAt' in existing() && existing().createdAt is timestamp && incoming().createdAt == existing().createdAt)
+          || (!('createdAt' in existing() && existing().createdAt is timestamp) && incoming().createdAt == request.time)
+        )
         && incoming().updatedAt == request.time
         && incoming().updatedBy == request.auth.uid
         && (
@@ -193,6 +198,24 @@ service cloud.firestore {
             existing().ownerId == request.auth.uid
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'mcPin', 'allowedEmails', 'updatedBy', 'updatedAt'
+            ])
+          )
+          ||
+          // Action 3: Owner normalizes an incomplete/legacy stage document to valid schema once
+          (
+            existing().ownerId == request.auth.uid
+            && !isValidStage(existing())
+            && incoming().diff(existing()).addedKeys().hasOnly([
+              'mcPin', 'allowedEmails', 'phase', 'currentQuestionIndex', 'revealedAnswerIds',
+              'activeTeamId', 'roundMultiplier', 'teams', 'isPaused', 'soundEnabled',
+              'questionOrder', 'completedQuestionIds', 'roundPots', 'showTrivia',
+              'showWinnerModal', 'timer', 'lottery', 'lastEvent', 'updatedBy', 'createdAt', 'updatedAt'
+            ])
+            && incoming().diff(existing()).changedKeys().hasOnly([
+              'mcPin', 'allowedEmails', 'phase', 'currentQuestionIndex', 'revealedAnswerIds',
+              'activeTeamId', 'roundMultiplier', 'teams', 'isPaused', 'soundEnabled',
+              'questionOrder', 'completedQuestionIds', 'roundPots', 'showTrivia',
+              'showWinnerModal', 'timer', 'lottery', 'lastEvent', 'updatedBy', 'createdAt', 'updatedAt'
             ])
           )
         );
