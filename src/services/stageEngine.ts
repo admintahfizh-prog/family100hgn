@@ -179,6 +179,26 @@ export function applyGameAction(
       return state;
     }
 
+    case 'HIDE_ANSWER': {
+      const answerId = Number(payload.answerId);
+      if (!state.revealedAnswerIds.includes(answerId)) return null;
+
+      state.revealedAnswerIds = state.revealedAnswerIds.filter((id) => id !== answerId);
+      const deductPoints = Boolean(payload.deductPoints);
+      const answer = currentQ.answers.find((a) => a.id === answerId);
+      if (deductPoints && answer) {
+        const pts = Math.trunc(answer.points * state.roundMultiplier);
+        state.teams[state.activeTeamId].score = Math.max(
+          0,
+          state.teams[state.activeTeamId].score - pts
+        );
+        state.roundPots = Math.max(0, state.roundPots - pts);
+      }
+
+      state.lastEvent = sanitizeEvent({ type: 'QUESTION_CHANGED', sound: 'reveal' });
+      return state;
+    }
+
     case 'ADD_STRIKE': {
       const team = state.teams[state.activeTeamId];
       const nextStrikes = Math.min(3, team.strikes + 1);

@@ -71,7 +71,6 @@ export const IfpDisplayPage: React.FC<IfpDisplayPageProps> = ({ initialStageFrom
     requestedStageId: initialStageFromUrl,
   });
 
-  const [localSoundEnabled, setLocalSoundEnabled] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [liveSecondsLeft, setLiveSecondsLeft] = useState(10);
 
@@ -91,11 +90,10 @@ export const IfpDisplayPage: React.FC<IfpDisplayPageProps> = ({ initialStageFrom
   const hasInitialSyncRef = useRef(false);
   const lastTickSecondRef = useRef<number | null>(null);
 
-  // Sync mute state
+  // Sync mute state two-way with Firestore
   useEffect(() => {
-    const enabled = localSoundEnabled && (gameState?.soundEnabled ?? true);
-    soundFx.setMuted(!enabled);
-  }, [localSoundEnabled, gameState?.soundEnabled]);
+    soundFx.setMuted(!(gameState?.soundEnabled ?? true));
+  }, [gameState?.soundEnabled]);
 
   // Smooth client-side countdown timer driven by Firestore startedAtMs
   useEffect(() => {
@@ -210,9 +208,12 @@ export const IfpDisplayPage: React.FC<IfpDisplayPageProps> = ({ initialStageFrom
         isReady={status === 'connected'}
         defaultTeamA={gameState.teams.teamA.name}
         defaultTeamB={gameState.teams.teamB.name}
+        onUpdateTeamName={(teamId, name) => {
+          void sendAction('UPDATE_TEAM_NAME', { teamId, name });
+        }}
         onStartGame={(nameA, nameB) => {
           soundFx.playCorrect();
-          sendAction('START_GAME', { teamAName: nameA, teamBName: nameB });
+          void sendAction('START_GAME', { teamAName: nameA, teamBName: nameB });
         }}
       />
     );
@@ -314,11 +315,11 @@ export const IfpDisplayPage: React.FC<IfpDisplayPageProps> = ({ initialStageFrom
 
             <button
               type="button"
-              onClick={() => setLocalSoundEnabled((prev) => !prev)}
+              onClick={() => void sendAction('TOGGLE_SOUND')}
               className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white cursor-pointer transition-colors"
-              title={localSoundEnabled ? 'Matikan Suara IFP' : 'Nyalakan Suara IFP'}
+              title={gameState.soundEnabled ? 'Matikan Suara IFP' : 'Nyalakan Suara IFP'}
             >
-              {localSoundEnabled ? (
+              {gameState.soundEnabled ? (
                 <Volume2 className="w-4 h-4 text-emerald-400" />
               ) : (
                 <VolumeX className="w-4 h-4 text-rose-400" />

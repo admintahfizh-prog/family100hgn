@@ -15,6 +15,7 @@ interface IntroScreenProps {
   isReady: boolean;
   defaultTeamA: string;
   defaultTeamB: string;
+  onUpdateTeamName?: (teamId: 'teamA' | 'teamB', name: string) => void;
   onStartGame: (teamAName: string, teamBName: string) => void;
 }
 
@@ -22,6 +23,7 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
   isReady,
   defaultTeamA,
   defaultTeamB,
+  onUpdateTeamName,
   onStartGame,
 }) => {
   const [teamAName, setTeamAName] = useState(defaultTeamA || 'Tim Ki Hajar Dewantara');
@@ -101,6 +103,11 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
                 type="text"
                 value={teamAName}
                 onChange={(e) => setTeamAName(e.target.value)}
+                onBlur={() => {
+                  if (onUpdateTeamName && teamAName.trim() && teamAName.trim() !== defaultTeamA) {
+                    onUpdateTeamName('teamA', teamAName.trim());
+                  }
+                }}
                 placeholder="Nama Tim 1..."
                 className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl px-3 py-2.5 text-white text-sm outline-none font-semibold"
                 required
@@ -116,6 +123,11 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
                 type="text"
                 value={teamBName}
                 onChange={(e) => setTeamBName(e.target.value)}
+                onBlur={() => {
+                  if (onUpdateTeamName && teamBName.trim() && teamBName.trim() !== defaultTeamB) {
+                    onUpdateTeamName('teamB', teamBName.trim());
+                  }
+                }}
                 placeholder="Nama Tim 2..."
                 className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl px-3 py-2.5 text-white text-sm outline-none font-semibold"
                 required

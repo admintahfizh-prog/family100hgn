@@ -60,6 +60,10 @@ export const McControlPage: React.FC<McControlPageProps> = ({
   onNavigateToIfp,
 }) => {
   const { user, signOutUser } = useFirebaseAuth();
+  const [overrideStageId, setOverrideStageId] = useState<string | undefined>(initialStageFromUrl);
+  const [stageInput, setStageInput] = useState(initialStageFromUrl || '');
+  const [showStageSwitch, setShowStageSwitch] = useState(false);
+
   const {
     stageId,
     stageDoc,
@@ -73,7 +77,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
     saveMatchRecord,
     deleteMatchRecord,
   } = useFirestoreStage({
-    requestedStageId: initialStageFromUrl,
+    requestedStageId: overrideStageId,
   });
 
   const [pinInput, setPinInput] = useState(
@@ -458,23 +462,67 @@ export const McControlPage: React.FC<McControlPageProps> = ({
             </button>
           </form>
 
-          <div className="mt-6 pt-5 border-t border-slate-800 flex items-center justify-between gap-3">
+          <div className="mt-5 pt-4 border-t border-slate-800 space-y-3">
             <button
               type="button"
-              onClick={onNavigateToIfp}
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-amber-300 transition-colors cursor-pointer"
+              onClick={() => setShowStageSwitch((prev) => !prev)}
+              className="text-[11px] font-semibold text-amber-300/90 hover:text-amber-300 underline cursor-pointer"
             >
-              <Monitor className="w-3.5 h-3.5" />
-              <span>Buka Tampilan Layar IFP</span>
+              {showStageSwitch
+                ? 'Sembunyikan pilihan Stage ID'
+                : 'Layar IFP pakai akun Google berbeda? Hubungkan via Stage ID'}
             </button>
-            <button
-              type="button"
-              onClick={signOutUser}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-300 transition-colors cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Ganti Akun</span>
-            </button>
+
+            {showStageSwitch && (
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-left space-y-2">
+                <label className="block text-[11px] font-bold text-slate-400">
+                  Tempel Stage ID atau Link MC dari Layar IFP:
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={stageInput}
+                    onChange={(e) => setStageInput(e.target.value)}
+                    placeholder="Contoh: 4XDJI1zYlfa8..."
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const raw = stageInput.trim();
+                      if (!raw) {
+                        setOverrideStageId(undefined);
+                        return;
+                      }
+                      const match = raw.match(/[?&]stage=([^&]+)/);
+                      setOverrideStageId(match ? decodeURIComponent(match[1]) : raw);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold cursor-pointer"
+                  >
+                    Sambungkan
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <button
+                type="button"
+                onClick={onNavigateToIfp}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-amber-300 transition-colors cursor-pointer"
+              >
+                <Monitor className="w-3.5 h-3.5" />
+                <span>Buka Tampilan Layar IFP</span>
+              </button>
+              <button
+                type="button"
+                onClick={signOutUser}
+                className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-300 transition-colors cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Ganti Akun</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -569,6 +617,20 @@ export const McControlPage: React.FC<McControlPageProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              onClick={() => void sendAction('TOGGLE_SOUND')}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                gameState.soundEnabled
+                  ? 'bg-blue-950/60 text-blue-300 border-blue-700'
+                  : 'bg-rose-950/60 text-rose-300 border-rose-700'
+              }`}
+              title="Sinkron dua arah dengan tombol suara di Layar IFP"
+            >
+              {gameState.soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+              <span>Suara IFP: {gameState.soundEnabled ? 'ON' : 'OFF'}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setMcPreviewAudio(!mcPreviewAudio)}
               className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
                 mcPreviewAudio
@@ -616,14 +678,60 @@ export const McControlPage: React.FC<McControlPageProps> = ({
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-5">
+        {/* Live Mirror Status Strip: Shows exact active state on IFP */}
+        <div className="rounded-2xl bg-slate-900/90 border border-slate-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 font-bold text-emerald-400">
+              <Monitor className="w-3.5 h-3.5" />
+              <span>Layar IFP Live:</span>
+            </span>
+            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-200 font-semibold">
+              {gameState.phase === 'INTRO' ? 'Halaman Pembuka' : 'Arena Kuis'}
+            </span>
+            {gameState.phase !== 'INTRO' && (
+              <>
+                <span className="px-2 py-0.5 rounded bg-blue-950/70 border border-blue-700/40 text-blue-200 font-semibold">
+                  Terbuka: {gameState.revealedAnswerIds.length}/{currentQuestion.answers.length}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-amber-950/60 border border-amber-600/40 text-amber-300 font-semibold">
+                  Giliran: {activeTeam.name}
+                </span>
+              </>
+            )}
+            {gameState.isPaused && (
+              <span className="px-2 py-0.5 rounded bg-rose-600 text-white font-bold">
+                DIJEDA
+              </span>
+            )}
+            {gameState.timer.isOpen && (
+              <span className="px-2 py-0.5 rounded bg-amber-400 text-slate-950 font-bold">
+                Timer: {liveSecondsLeft}d
+              </span>
+            )}
+            {gameState.lottery.isOpen && (
+              <span className="px-2 py-0.5 rounded bg-purple-500/30 text-purple-200 font-bold">
+                Undian Aktif
+              </span>
+            )}
+            {gameState.showWinnerModal && (
+              <span className="px-2 py-0.5 rounded bg-emerald-500/30 text-emerald-200 font-bold">
+                Papan Juara Tampil
+              </span>
+            )}
+          </div>
+          <span className="text-[11px] text-slate-400">
+            Sinkronisasi 2 arah MC ↔ IFP aktif
+          </span>
+        </div>
+
         {/* If IFP is still on INTRO screen, MC can setup teams and start remotely */}
         {gameState.phase === 'INTRO' ? (
           <div className="max-w-2xl mx-auto rounded-2xl bg-slate-900 border border-amber-400/50 p-6 space-y-5">
             <div className="text-center">
               <h2 className="text-xl font-bold text-white mb-1">Layar IFP Masih di Halaman Pembuka</h2>
               <p className="text-sm text-slate-400">
-                Atur nama tim dan mulai perlombaan langsung dari panel MC ini.
+                Atur nama tim dan mulai perlombaan langsung dari panel MC ini (otomatis tampil di Layar IFP).
               </p>
             </div>
 
@@ -636,6 +744,14 @@ export const McControlPage: React.FC<McControlPageProps> = ({
                   type="text"
                   value={introTeamA}
                   onChange={(e) => setIntroTeamA(e.target.value)}
+                  onBlur={() => {
+                    if (introTeamA.trim() && introTeamA.trim() !== gameState.teams.teamA.name) {
+                      void sendAction('UPDATE_TEAM_NAME', {
+                        teamId: 'teamA',
+                        name: introTeamA.trim(),
+                      });
+                    }
+                  }}
                   className="w-full bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-xl px-3 py-2 text-sm text-white outline-none"
                 />
               </div>
@@ -647,6 +763,14 @@ export const McControlPage: React.FC<McControlPageProps> = ({
                   type="text"
                   value={introTeamB}
                   onChange={(e) => setIntroTeamB(e.target.value)}
+                  onBlur={() => {
+                    if (introTeamB.trim() && introTeamB.trim() !== gameState.teams.teamB.name) {
+                      void sendAction('UPDATE_TEAM_NAME', {
+                        teamId: 'teamB',
+                        name: introTeamB.trim(),
+                      });
+                    }
+                  }}
                   className="w-full bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-xl px-3 py-2 text-sm text-white outline-none"
                 />
               </div>
@@ -931,10 +1055,25 @@ export const McControlPage: React.FC<McControlPageProps> = ({
 
                           <div className="flex items-center gap-1.5 shrink-0">
                             {isRevealed ? (
-                              <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 px-2">
-                                <CheckCircle2 className="w-4 h-4" />
-                                Terbuka
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 px-1.5">
+                                  <CheckCircle2 className="w-4 h-4" />
+                                  Terbuka
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void sendAction('HIDE_ANSWER', {
+                                      answerId: ans.id,
+                                      deductPoints: false,
+                                    })
+                                  }
+                                  className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-300 hover:text-rose-300 border border-slate-700 text-[11px] font-semibold cursor-pointer"
+                                  title="Tutup kembali jawaban ini di Layar IFP (tanpa mengubah skor)"
+                                >
+                                  Tutup
+                                </button>
+                              </div>
                             ) : (
                               <>
                                 <button
