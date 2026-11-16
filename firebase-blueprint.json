@@ -1,0 +1,213 @@
+{
+  "entities": {
+    "StageRoom": {
+      "title": "StageRoom",
+      "description": "Real-time Family 100 HGN game stage synchronized between the IFP display and remote MC controller.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the organizer/teacher who owns this stage.",
+          "maxLength": 128
+        },
+        "mcPin": {
+          "type": "string",
+          "description": "4-to-6 digit PIN required on the MC control page.",
+          "minLength": 4,
+          "maxLength": 6,
+          "pattern": "^[0-9]{4,6}$"
+        },
+        "allowedEmails": {
+          "type": "array",
+          "description": "Bounded list (max 10) of verified co-host Google emails allowed to control MC or view the stage."
+        },
+        "phase": {
+          "type": "string",
+          "description": "Current display phase of the game stage.",
+          "enum": ["INTRO", "PLAYING", "SUMMARY"]
+        },
+        "currentQuestionIndex": {
+          "type": "integer",
+          "description": "Index inside questionOrder currently active on stage."
+        },
+        "revealedAnswerIds": {
+          "type": "array",
+          "description": "Array of answer IDs revealed for the current question."
+        },
+        "activeTeamId": {
+          "type": "string",
+          "description": "Team currently in control of the board.",
+          "enum": ["teamA", "teamB"]
+        },
+        "roundMultiplier": {
+          "type": "integer",
+          "description": "Point multiplier for current round (1 or 2)."
+        },
+        "teams": {
+          "type": "object",
+          "description": "Score, name, color, strikes, and roundWins for teamA and teamB."
+        },
+        "isPaused": {
+          "type": "boolean",
+          "description": "Whether the stage is paused by MC."
+        },
+        "soundEnabled": {
+          "type": "boolean",
+          "description": "Global sound toggle controlled by MC."
+        },
+        "questionOrder": {
+          "type": "array",
+          "description": "Ordered array of question indices."
+        },
+        "completedQuestionIds": {
+          "type": "array",
+          "description": "List of completed question IDs."
+        },
+        "roundPots": {
+          "type": "integer",
+          "description": "Accumulated points in the current round."
+        },
+        "showTrivia": {
+          "type": "boolean",
+          "description": "Whether trivia hint is displayed on IFP."
+        },
+        "showWinnerModal": {
+          "type": "boolean",
+          "description": "Whether final winner celebration modal is visible."
+        },
+        "timer": {
+          "type": "object",
+          "description": "Synchronized 10-second rapid challenge timer state."
+        },
+        "lottery": {
+          "type": "object",
+          "description": "Synchronized first-turn team lottery state."
+        },
+        "lastEvent": {
+          "type": "object",
+          "description": "Latest sound/visual event payload triggered for IFP."
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "UID of the user who applied the latest state update.",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "ownerId",
+        "mcPin",
+        "allowedEmails",
+        "phase",
+        "currentQuestionIndex",
+        "revealedAnswerIds",
+        "activeTeamId",
+        "roundMultiplier",
+        "teams",
+        "isPaused",
+        "soundEnabled",
+        "questionOrder",
+        "completedQuestionIds",
+        "roundPots",
+        "showTrivia",
+        "showWinnerModal",
+        "timer",
+        "lottery",
+        "lastEvent",
+        "updatedBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MatchRecord": {
+      "title": "MatchRecord",
+      "description": "Saved final match leaderboard record for a completed Family 100 HGN match.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the user saving the match record.",
+          "maxLength": 128
+        },
+        "stageId": {
+          "type": "string",
+          "description": "Parent stage document ID.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "teamAName": {
+          "type": "string",
+          "description": "Name of Team 1.",
+          "maxLength": 80
+        },
+        "teamAScore": {
+          "type": "integer",
+          "description": "Final score of Team 1."
+        },
+        "teamBName": {
+          "type": "string",
+          "description": "Name of Team 2.",
+          "maxLength": 80
+        },
+        "teamBScore": {
+          "type": "integer",
+          "description": "Final score of Team 2."
+        },
+        "winnerName": {
+          "type": "string",
+          "description": "Winning team name or Seri.",
+          "maxLength": 80
+        },
+        "totalQuestionsPlayed": {
+          "type": "integer",
+          "description": "Count of questions played in this match."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "ownerId",
+        "stageId",
+        "teamAName",
+        "teamAScore",
+        "teamBName",
+        "teamBScore",
+        "winnerName",
+        "totalQuestionsPlayed",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/stages/{stageId}": {
+      "schema": {
+        "$ref": "#/entities/StageRoom"
+      },
+      "description": "Live synchronized game state document per organizer stage."
+    },
+    "/stages/{stageId}/matches/{matchId}": {
+      "schema": {
+        "$ref": "#/entities/MatchRecord"
+      },
+      "description": "Archived final match scores under each organizer stage."
+    }
+  }
+}

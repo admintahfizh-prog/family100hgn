@@ -1,0 +1,6 @@
+{
+  "name": "Family 100 Spesial Hari Guru Nasional (HGN)",
+  "description": "Game kuis interaktif Family 100 edisi Hari Guru Nasional untuk lomba guru dengan proyektor, papan skor 2 tim, soundboard MC, dan 30+ bank soal edukatif & humor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

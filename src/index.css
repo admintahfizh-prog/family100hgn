@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif;
+  }
+}
+
+.font-condensed {
+  font-family: 'Barlow Condensed', 'Outfit', sans-serif;
+}
+
+.perspective-1000 {
+  perspective: 1000px;
+}
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+.backface-hidden {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.rotate-y-180 {
+  transform: rotateY(180deg);
+}
+
+@keyframes strikeShake {
+  0%, 100% { transform: scale(1) rotate(0deg); }
+  20% { transform: scale(1.15) rotate(-6deg); }
+  40% { transform: scale(1.15) rotate(6deg); }
+  60% { transform: scale(1.1) rotate(-4deg); }
+  80% { transform: scale(1.05) rotate(4deg); }
+}
+
+.animate-strike-shake {
+  animation: strikeShake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+@keyframes floatScore {
+  0% { opacity: 0; transform: translateY(10px) scale(0.8); }
+  20% { opacity: 1; transform: translateY(-5px) scale(1.2); }
+  80% { opacity: 1; transform: translateY(-25px) scale(1.05); }
+  100% { opacity: 0; transform: translateY(-40px) scale(0.9); }
+}
+
+.animate-float-score {
+  animation: floatScore 1.4s ease-out forwards;
+}
+
+@keyframes stagePulse {
+  0%, 100% { opacity: 0.25; filter: blur(35px); }
+  50% { opacity: 0.5; filter: blur(45px); }
+}
+
+.animate-stage-pulse {
+  animation: stagePulse 4s ease-in-out infinite;
+}

@@ -1,0 +1,226 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isStageAuthorized(data) {
+      return data.ownerId == request.auth.uid
+        || (
+          'email' in request.auth.token
+          && request.auth.token.email is string
+          && request.auth.token.email in data.allowedEmails
+        );
+    }
+
+    function isValidTeam(team, expectedId) {
+      return team is map
+        && team.keys().hasAll(['id', 'name', 'color', 'score', 'strikes', 'roundWins'])
+        && team.keys().hasOnly(['id', 'name', 'color', 'score', 'strikes', 'roundWins'])
+        && team.id == expectedId
+        && team.name is string && team.name.size() >= 1 && team.name.size() <= 80
+        && team.color is string && team.color.size() >= 4 && team.color.size() <= 20
+        && team.score is int && team.score >= 0 && team.score <= 1000000
+        && team.strikes is int && team.strikes >= 0 && team.strikes <= 3
+        && team.roundWins is int && team.roundWins >= 0 && team.roundWins <= 1000;
+    }
+
+    function isValidTimer(timer) {
+      return timer is map
+        && timer.keys().hasAll(['isOpen', 'secondsLeft', 'isRunning'])
+        && timer.keys().hasOnly(['isOpen', 'secondsLeft', 'isRunning', 'startedAtMs'])
+        && timer.isOpen is bool
+        && timer.secondsLeft is int && timer.secondsLeft >= 0 && timer.secondsLeft <= 300
+        && timer.isRunning is bool
+        && (!('startedAtMs' in timer) || timer.startedAtMs == null || (timer.startedAtMs is int && timer.startedAtMs >= 0));
+    }
+
+    function isValidLottery(lottery) {
+      return lottery is map
+        && lottery.keys().hasAll(['isOpen', 'isSpinning', 'winner'])
+        && lottery.keys().hasOnly(['isOpen', 'isSpinning', 'winner'])
+        && lottery.isOpen is bool
+        && lottery.isSpinning is bool
+        && (lottery.winner == null || lottery.winner in ['teamA', 'teamB']);
+    }
+
+    function isValidLastEvent(ev) {
+      return ev == null || (
+        ev is map
+        && ev.keys().hasAll(['id', 'type'])
+        && ev.keys().hasOnly(['id', 'type', 'sound', 'teamId', 'teamName', 'amount', 'strikeCount', 'confetti'])
+        && ev.id is string && ev.id.size() >= 1 && ev.id.size() <= 64
+        && ev.type in [
+          'ANSWER_REVEALED', 'STRIKE_ADDED', 'ALL_REVEALED', 'QUESTION_CHANGED',
+          'SOUNDBOARD', 'TIMER_TICK', 'TIMER_END', 'LOTTERY_WIN', 'GAME_STARTED', 'GAME_RESET'
+        ]
+        && (!('sound' in ev) || ev.sound == null || ev.sound in ['correct', 'wrong', 'reveal', 'points', 'bell', 'drumRoll', 'applause', 'fanfare', 'tick', 'timesUp'])
+        && (!('teamId' in ev) || ev.teamId == null || ev.teamId in ['teamA', 'teamB'])
+        && (!('teamName' in ev) || ev.teamName == null || (ev.teamName is string && ev.teamName.size() <= 80))
+        && (!('amount' in ev) || ev.amount == null || (ev.amount is int && ev.amount >= 0 && ev.amount <= 10000))
+        && (!('strikeCount' in ev) || ev.strikeCount == null || (ev.strikeCount is int && ev.strikeCount >= 0 && ev.strikeCount <= 3))
+        && (!('confetti' in ev) || ev.confetti == null || ev.confetti is bool)
+      );
+    }
+
+    function isValidStage(data) {
+      return data.keys().hasAll([
+        'ownerId', 'mcPin', 'allowedEmails', 'phase', 'currentQuestionIndex',
+        'revealedAnswerIds', 'activeTeamId', 'roundMultiplier', 'teams',
+        'isPaused', 'soundEnabled', 'questionOrder', 'completedQuestionIds',
+        'roundPots', 'showTrivia', 'showWinnerModal', 'timer', 'lottery',
+        'lastEvent', 'updatedBy', 'createdAt', 'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'ownerId', 'mcPin', 'allowedEmails', 'phase', 'currentQuestionIndex',
+        'revealedAnswerIds', 'activeTeamId', 'roundMultiplier', 'teams',
+        'isPaused', 'soundEnabled', 'questionOrder', 'completedQuestionIds',
+        'roundPots', 'showTrivia', 'showWinnerModal', 'timer', 'lottery',
+        'lastEvent', 'updatedBy', 'createdAt', 'updatedAt'
+      ])
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
+      && data.mcPin is string && data.mcPin.size() >= 4 && data.mcPin.size() <= 6 && data.mcPin.matches('^[0-9]{4,6}$')
+      && data.allowedEmails is list && data.allowedEmails.size() <= 10
+      && (data.allowedEmails.size() == 0 || (data.allowedEmails[0] is string && data.allowedEmails[0].size() <= 120))
+      && data.phase in ['INTRO', 'PLAYING', 'SUMMARY']
+      && data.currentQuestionIndex is int && data.currentQuestionIndex >= 0 && data.currentQuestionIndex <= 200
+      && data.revealedAnswerIds is list && data.revealedAnswerIds.size() <= 10
+      && (data.revealedAnswerIds.size() == 0 || data.revealedAnswerIds[0] is int)
+      && data.activeTeamId in ['teamA', 'teamB']
+      && data.roundMultiplier is int && data.roundMultiplier in [1, 2]
+      && data.teams is map
+      && data.teams.keys().hasAll(['teamA', 'teamB'])
+      && data.teams.keys().hasOnly(['teamA', 'teamB'])
+      && isValidTeam(data.teams.teamA, 'teamA')
+      && isValidTeam(data.teams.teamB, 'teamB')
+      && data.isPaused is bool
+      && data.soundEnabled is bool
+      && data.questionOrder is list && data.questionOrder.size() >= 1 && data.questionOrder.size() <= 200
+      && data.questionOrder[0] is int
+      && data.completedQuestionIds is list && data.completedQuestionIds.size() <= 200
+      && (data.completedQuestionIds.size() == 0 || data.completedQuestionIds[0] is int)
+      && data.roundPots is int && data.roundPots >= 0 && data.roundPots <= 100000
+      && data.showTrivia is bool
+      && data.showWinnerModal is bool
+      && isValidTimer(data.timer)
+      && isValidLottery(data.lottery)
+      && isValidLastEvent(data.lastEvent)
+      && data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidMatchRecord(data) {
+      return data.keys().hasAll([
+        'ownerId', 'stageId', 'teamAName', 'teamAScore',
+        'teamBName', 'teamBScore', 'winnerName', 'totalQuestionsPlayed',
+        'createdAt', 'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'ownerId', 'stageId', 'teamAName', 'teamAScore',
+        'teamBName', 'teamBScore', 'winnerName', 'totalQuestionsPlayed',
+        'createdAt', 'updatedAt'
+      ])
+      && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
+      && isValidId(data.stageId)
+      && data.teamAName is string && data.teamAName.size() >= 1 && data.teamAName.size() <= 80
+      && data.teamAScore is int && data.teamAScore >= 0 && data.teamAScore <= 1000000
+      && data.teamBName is string && data.teamBName.size() >= 1 && data.teamBName.size() <= 80
+      && data.teamBScore is int && data.teamBScore >= 0 && data.teamBScore <= 1000000
+      && data.winnerName is string && data.winnerName.size() >= 1 && data.winnerName.size() <= 80
+      && data.totalQuestionsPlayed is int && data.totalQuestionsPlayed >= 0 && data.totalQuestionsPlayed <= 200
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    match /stages/{stageId} {
+      allow get: if isVerifiedUser()
+        && isValidId(stageId)
+        && (
+          (resource == null && stageId == request.auth.uid)
+          || (resource != null && isStageAuthorized(existing()))
+        );
+      allow list: if isVerifiedUser() && isStageAuthorized(existing());
+      allow create: if isVerifiedUser()
+        && isValidId(stageId)
+        && stageId == request.auth.uid
+        && isValidStage(incoming())
+        && incoming().ownerId == request.auth.uid
+        && incoming().updatedBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(stageId)
+        && isValidStage(incoming())
+        && isStageAuthorized(existing())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().updatedBy == request.auth.uid
+        && (
+          // Action 1: Gameplay & stage state sync (IFP or authorized MC)
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'phase', 'currentQuestionIndex', 'revealedAnswerIds', 'activeTeamId',
+            'roundMultiplier', 'teams', 'isPaused', 'soundEnabled', 'questionOrder',
+            'completedQuestionIds', 'roundPots', 'showTrivia', 'showWinnerModal',
+            'timer', 'lottery', 'lastEvent', 'updatedBy', 'updatedAt'
+          ])
+          ||
+          // Action 2: Owner updates MC PIN or co-host allowedEmails
+          (
+            existing().ownerId == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'mcPin', 'allowedEmails', 'updatedBy', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(stageId) && existing().ownerId == request.auth.uid;
+
+      match /matches/{matchId} {
+        allow get: if isVerifiedUser()
+          && isValidId(stageId)
+          && isValidId(matchId)
+          && isStageAuthorized(get(/databases/$(database)/documents/stages/$(stageId)).data);
+        allow list: if isVerifiedUser()
+          && isValidId(stageId)
+          && resource.data.ownerId == request.auth.uid;
+        allow create: if isVerifiedUser()
+          && isValidId(stageId)
+          && isValidId(matchId)
+          && isValidMatchRecord(incoming())
+          && incoming().stageId == stageId
+          && incoming().ownerId == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/stages/$(stageId))
+          && isStageAuthorized(get(/databases/$(database)/documents/stages/$(stageId)).data);
+        allow delete: if isVerifiedUser()
+          && isValidId(stageId)
+          && isValidId(matchId)
+          && existing().ownerId == request.auth.uid;
+      }
+    }
+  }
+}
