@@ -102,7 +102,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
   const [newPinInput, setNewPinInput] = useState('');
   const [coHostEmailInput, setCoHostEmailInput] = useState('');
   const [settingsMsg, setSettingsMsg] = useState<{ text: string; ok: boolean } | null>(null);
-  const [copiedLinkType, setCopiedLinkType] = useState<'mc' | 'ifp' | null>(null);
+  const [copiedLinkType, setCopiedLinkType] = useState<'mc' | 'ifp' | 'stage' | null>(null);
   const [isSavingMatch, setIsSavingMatch] = useState(false);
 
   // Intro edit names on MC
@@ -273,14 +273,16 @@ export const McControlPage: React.FC<McControlPageProps> = ({
     }
   };
 
-  const copyShareUrl = (type: 'mc' | 'ifp') => {
+  const copyShareUrl = (type: 'mc' | 'ifp' | 'stage') => {
     if (!stageId) return;
     const base = window.location.origin;
-    const url =
-      type === 'mc'
+    const text =
+      type === 'stage'
+        ? stageId
+        : type === 'mc'
         ? `${base}/mc?stage=${encodeURIComponent(stageId)}`
         : `${base}/?stage=${encodeURIComponent(stageId)}`;
-    navigator.clipboard.writeText(url).catch(() => {});
+    navigator.clipboard.writeText(text).catch(() => {});
     setCopiedLinkType(type);
     setTimeout(() => setCopiedLinkType(null), 2000);
   };
@@ -476,7 +478,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
             {showStageSwitch && (
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-left space-y-2">
                 <label className="block text-[11px] font-bold text-slate-400">
-                  Tempel Stage ID atau Link MC dari Layar IFP:
+                  Tempel Stage ID atau Link MC dari Pemilik Stage (menu &ldquo;Firebase, PIN &amp; Riwayat&rdquo;):
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -1412,6 +1414,34 @@ export const McControlPage: React.FC<McControlPageProps> = ({
                   Project: {firebaseConfig.projectId}
                 </span>
               </div>
+
+              {stageId && (
+                <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Kode Stage ID (Sinkronisasi IFP &harr; MC)
+                    </div>
+                    <div className="font-mono text-amber-300 truncate">{stageId}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => copyShareUrl('stage')}
+                    className="shrink-0 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {copiedLinkType === 'stage' ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Tersalin</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Salin ID</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <button

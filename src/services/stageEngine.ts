@@ -157,13 +157,26 @@ export const STAGE_REQUIRED_KEYS = [
   'updatedAt',
 ] as const;
 
-function isFirestoreTimestampLike(val: unknown): boolean {
+export function isFirestoreTimestampLike(val: unknown): boolean {
   return Boolean(
     val &&
       typeof val === 'object' &&
       typeof (val as { toMillis?: unknown }).toMillis === 'function'
   );
 }
+
+const VALID_SOUNDS = new Set([
+  'correct',
+  'wrong',
+  'reveal',
+  'points',
+  'bell',
+  'drumRoll',
+  'applause',
+  'fanfare',
+  'tick',
+  'timesUp',
+]);
 
 export function isStageMetadataComplete(raw: Record<string, unknown>): boolean {
   for (const key of STAGE_REQUIRED_KEYS) {
@@ -263,6 +276,32 @@ export function isStageMetadataComplete(raw: Record<string, unknown>): boolean {
         'GAME_RESET',
       ].includes(ev.type)
     ) {
+      return false;
+    }
+    if ('sound' in ev && ev.sound !== null && (typeof ev.sound !== 'string' || !VALID_SOUNDS.has(ev.sound))) {
+      return false;
+    }
+    if ('teamId' in ev && ev.teamId !== null && ev.teamId !== 'teamA' && ev.teamId !== 'teamB') {
+      return false;
+    }
+    if ('teamName' in ev && ev.teamName !== null && (typeof ev.teamName !== 'string' || ev.teamName.length > 80)) {
+      return false;
+    }
+    if (
+      'amount' in ev &&
+      ev.amount !== null &&
+      (typeof ev.amount !== 'number' || !Number.isInteger(ev.amount) || ev.amount < 0 || ev.amount > 10000)
+    ) {
+      return false;
+    }
+    if (
+      'strikeCount' in ev &&
+      ev.strikeCount !== null &&
+      (typeof ev.strikeCount !== 'number' || !Number.isInteger(ev.strikeCount) || ev.strikeCount < 0 || ev.strikeCount > 3)
+    ) {
+      return false;
+    }
+    if ('confetti' in ev && ev.confetti !== null && typeof ev.confetti !== 'boolean') {
       return false;
     }
   }

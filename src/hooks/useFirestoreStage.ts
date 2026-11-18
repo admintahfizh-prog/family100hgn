@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   onSnapshot,
   query,
   serverTimestamp,
   setDoc,
-  Timestamp,
   updateDoc,
   where,
   limit,
@@ -19,8 +19,10 @@ import type { GameState, MatchRecord, StageDocument } from '../types/game.ts';
 import {
   applyGameAction,
   createInitialStageDocument,
+  isFirestoreTimestampLike,
   isStageMetadataComplete,
   normalizeGameState,
+  STAGE_REQUIRED_KEYS,
 } from '../services/stageEngine.ts';
 
 export type SyncStatus = 'idle' | 'connecting' | 'connected' | 'error';
@@ -201,17 +203,26 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
                 .map((e) => e.trim().toLowerCase().slice(0, 120))
                 .slice(0, 10)
             : [];
-          const hasValidCreatedAt = raw.createdAt instanceof Timestamp;
 
-          await setDoc(docRef, {
+          const repairPatch: Record<string, unknown> = {
             ...nextGameState,
-            ownerId: user.uid,
             mcPin: safePin,
             allowedEmails: safeEmails,
             updatedBy: user.uid,
-            createdAt: hasValidCreatedAt ? raw.createdAt : serverTimestamp(),
             updatedAt: serverTimestamp(),
-          });
+          };
+
+          if (!isFirestoreTimestampLike(raw.createdAt)) {
+            repairPatch.createdAt = serverTimestamp();
+          }
+
+          for (const existingKey of Object.keys(raw)) {
+            if (!(STAGE_REQUIRED_KEYS as readonly string[]).includes(existingKey)) {
+              repairPatch[existingKey] = deleteField();
+            }
+          }
+
+          await updateDoc(docRef, repairPatch);
           return;
         }
 

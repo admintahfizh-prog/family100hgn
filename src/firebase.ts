@@ -1,24 +1,48 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import {
+  getFirestore,
+  initializeFirestore,
+  doc,
+  getDocFromServer,
+} from 'firebase/firestore';
 import defaultFirebaseConfig from '../firebase-applet-config.json';
 
+function envOrDefault(envVal: unknown, fallback: string): string {
+  return typeof envVal === 'string' && envVal.trim() ? envVal.trim() : fallback;
+}
+
 export const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || defaultFirebaseConfig.apiKey,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || defaultFirebaseConfig.authDomain,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || defaultFirebaseConfig.projectId,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || defaultFirebaseConfig.storageBucket,
-  messagingSenderId:
-    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || defaultFirebaseConfig.messagingSenderId,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || defaultFirebaseConfig.appId,
-  firestoreDatabaseId:
-    import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID ||
-    defaultFirebaseConfig.firestoreDatabaseId,
+  apiKey: envOrDefault(import.meta.env.VITE_FIREBASE_API_KEY, defaultFirebaseConfig.apiKey),
+  authDomain: envOrDefault(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN, defaultFirebaseConfig.authDomain),
+  projectId: envOrDefault(import.meta.env.VITE_FIREBASE_PROJECT_ID, defaultFirebaseConfig.projectId),
+  storageBucket: envOrDefault(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET, defaultFirebaseConfig.storageBucket),
+  messagingSenderId: envOrDefault(
+    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    defaultFirebaseConfig.messagingSenderId
+  ),
+  appId: envOrDefault(import.meta.env.VITE_FIREBASE_APP_ID, defaultFirebaseConfig.appId),
+  firestoreDatabaseId: envOrDefault(
+    import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID,
+    defaultFirebaseConfig.firestoreDatabaseId
+  ),
 };
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+function initDb() {
+  try {
+    return initializeFirestore(
+      app,
+      { experimentalAutoDetectLongPolling: true },
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+}
+
+export const db = initDb();
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
@@ -79,7 +103,17 @@ async function testConnection() {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (retryError) {
+        if (
+          retryError instanceof Error &&
+          retryError.message.includes('the client is offline')
+        ) {
+          console.error('Please check your Firebase configuration.');
+        }
+      }
     }
   }
 }
