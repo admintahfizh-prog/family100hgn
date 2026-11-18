@@ -9,6 +9,7 @@ import {
   Award,
   BookOpen,
   Monitor,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface IntroScreenProps {
@@ -16,18 +17,19 @@ interface IntroScreenProps {
   defaultTeamA: string;
   defaultTeamB: string;
   onUpdateTeamName?: (teamId: 'teamA' | 'teamB', name: string) => void;
-  onStartGame: (teamAName: string, teamBName: string) => void;
+  onStartGame: (teamAName: string, teamBName: string) => Promise<void> | void;
 }
 
 export const IntroScreen: React.FC<IntroScreenProps> = ({
   isReady,
   defaultTeamA,
   defaultTeamB,
-  onUpdateTeamName,
   onStartGame,
 }) => {
   const [teamAName, setTeamAName] = useState(defaultTeamA || 'Tim Ki Hajar Dewantara');
   const [teamBName, setTeamBName] = useState(defaultTeamB || 'Tim R.A. Kartini');
+  const [isStarting, setIsStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
   useEffect(() => {
     if (defaultTeamA) setTeamAName(defaultTeamA);
@@ -37,9 +39,27 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
     if (defaultTeamB) setTeamBName(defaultTeamB);
   }, [defaultTeamB]);
 
-  const handleStart = (e: React.FormEvent) => {
+  const handleStart = async (e: React.FormEvent) => {
     e.preventDefault();
-    onStartGame(teamAName.trim() || 'Tim 1', teamBName.trim() || 'Tim 2');
+    if (!isReady || isStarting) return;
+    setIsStarting(true);
+    setStartError(null);
+    try {
+      await onStartGame(teamAName.trim() || 'Tim 1', teamBName.trim() || 'Tim 2');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('Missing or insufficient permissions')) {
+        setStartError(
+          'Izin Firestore ditolak. Pastikan Anda login dengan akun Google pemilik stage atau Co-Host yang terdaftar.'
+        );
+      } else {
+        setStartError(
+          'Gagal membuka Layar IFP ke server Firestore. Periksa koneksi internet Anda lalu coba lagi.'
+        );
+      }
+    } finally {
+      setIsStarting(false);
+    }
   };
 
   return (
@@ -103,11 +123,6 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
                 type="text"
                 value={teamAName}
                 onChange={(e) => setTeamAName(e.target.value)}
-                onBlur={() => {
-                  if (onUpdateTeamName && teamAName.trim() && teamAName.trim() !== defaultTeamA) {
-                    onUpdateTeamName('teamA', teamAName.trim());
-                  }
-                }}
                 placeholder="Nama Tim 1..."
                 className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl px-3 py-2.5 text-white text-sm outline-none font-semibold"
                 required
@@ -123,11 +138,6 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
                 type="text"
                 value={teamBName}
                 onChange={(e) => setTeamBName(e.target.value)}
-                onBlur={() => {
-                  if (onUpdateTeamName && teamBName.trim() && teamBName.trim() !== defaultTeamB) {
-                    onUpdateTeamName('teamB', teamBName.trim());
-                  }
-                }}
                 placeholder="Nama Tim 2..."
                 className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl px-3 py-2.5 text-white text-sm outline-none font-semibold"
                 required
@@ -135,15 +145,28 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
             </div>
           </div>
 
+          {startError && (
+            <div className="p-3 rounded-xl bg-rose-950/80 border border-rose-500/50 text-rose-200 text-xs font-semibold flex items-center justify-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+              <span>{startError}</span>
+            </div>
+          )}
+
           {/* Launch Button */}
-          <div className="pt-2">
+          <div className="pt-2 space-y-2">
             <button
               type="submit"
-              disabled={!isReady}
+              disabled={!isReady || isStarting}
               className="w-full sm:w-auto inline-flex items-center justify-center gap-3 px-10 py-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-condensed font-black text-2xl tracking-wider uppercase shadow-[0_0_35px_rgba(245,158,11,0.6)] transition-all transform hover:scale-105 active:scale-95 disabled:opacity-50 cursor-pointer"
             >
               <Monitor className="w-6 h-6" />
-              <span>TAMPILKAN LAYAR IFP</span>
+              <span>
+                {!isReady
+                  ? 'MENGHUBUNGKAN STAGE...'
+                  : isStarting
+                  ? 'MEMBUKA LAYAR IFP...'
+                  : 'TAMPILKAN LAYAR IFP'}
+              </span>
             </button>
           </div>
         </form>

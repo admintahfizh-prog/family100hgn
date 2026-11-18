@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import { FirebaseProvider, AuthGate } from './contexts/FirebaseAuthContext.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { IfpDisplayPage } from './pages/IfpDisplayPage.tsx';
 import { McControlPage } from './pages/McControlPage.tsx';
 
@@ -41,25 +42,27 @@ export default function App() {
   };
 
   return (
-    <FirebaseProvider>
-      <AuthGate
-        title={route.mode === 'mc' ? 'Kontrol MC Family 100 HGN' : 'Family 100 – Special HGN'}
-        subtitle={
-          route.mode === 'mc'
-            ? 'Masuk dengan akun Google untuk menghubungkan dashboard MC secara real-time dengan layar IFP melalui Firebase.'
-            : 'Masuk dengan akun Google untuk menghubungkan layar IFP ke Firebase Firestore dan sinkronisasi dengan perangkat MC.'
-        }
-      >
-        {route.mode === 'mc' ? (
-          <McControlPage
-            initialPinFromUrl={route.pin}
-            initialStageFromUrl={route.stage}
-            onNavigateToIfp={navigateToIfp}
-          />
-        ) : (
-          <IfpDisplayPage initialStageFromUrl={route.stage} />
-        )}
-      </AuthGate>
-    </FirebaseProvider>
+    <ErrorBoundary>
+      <FirebaseProvider>
+        <AuthGate
+          title={route.mode === 'mc' ? 'Kontrol MC Family 100 HGN' : 'Family 100 – Special HGN'}
+          subtitle={
+            route.mode === 'mc'
+              ? 'Masuk dengan akun Google untuk menghubungkan dashboard MC secara real-time dengan layar IFP melalui Firebase.'
+              : 'Masuk dengan akun Google untuk menghubungkan layar IFP ke Firebase Firestore dan sinkronisasi dengan perangkat MC.'
+          }
+        >
+          {route.mode === 'mc' ? (
+            <McControlPage
+              initialPinFromUrl={route.pin}
+              initialStageFromUrl={route.stage}
+              onNavigateToIfp={navigateToIfp}
+            />
+          ) : (
+            <IfpDisplayPage initialStageFromUrl={route.stage} />
+          )}
+        </AuthGate>
+      </FirebaseProvider>
+    </ErrorBoundary>
   );
 }

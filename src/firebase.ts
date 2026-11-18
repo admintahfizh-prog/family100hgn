@@ -98,21 +98,56 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
+async function verifyRestEndpoint(): Promise<'reachable' | 'bad_config' | 'network_blocked'> {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+      firebaseConfig.projectId
+    )}/databases/${encodeURIComponent(
+      firebaseConfig.firestoreDatabaseId
+    )}/documents/test/connection?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
+
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), 6000) : null;
+
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        signal: controller?.signal,
+      });
+      if (res.status === 404) {
+        const text = await res.text().catch(() => '');
+        if (
+          text.includes('does not exist') ||
+          text.includes('NOT_FOUND') ||
+          text.includes('Project')
+        ) {
+          return 'bad_config';
+        }
+      }
+      return 'reachable';
+    } finally {
+      if (timeoutId !== null) clearTimeout(timeoutId);
+    }
+  } catch {
+    return 'network_blocked';
+  }
+}
+
 async function testConnection() {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return;
+  }
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
-      } catch (retryError) {
-        if (
-          retryError instanceof Error &&
-          retryError.message.includes('the client is offline')
-        ) {
-          console.error('Please check your Firebase configuration.');
-        }
+      const probe = await verifyRestEndpoint();
+      if (probe === 'bad_config') {
+        console.error('Please check your Firebase configuration.');
+      } else if (probe === 'network_blocked') {
+        console.warn(
+          'Koneksi ke Firestore sedang terblokir atau offline. Pastikan internet aktif dan tidak diblokir firewall/adblocker.'
+        );
       }
     }
   }

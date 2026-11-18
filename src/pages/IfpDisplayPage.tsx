@@ -24,6 +24,7 @@ import {
   Pause,
   Home,
   AlertTriangle,
+  RotateCcw,
 } from 'lucide-react';
 
 function playSoundByName(name?: SoundEffectName) {
@@ -67,12 +68,13 @@ interface IfpDisplayPageProps {
 }
 
 export const IfpDisplayPage: React.FC<IfpDisplayPageProps> = ({ initialStageFromUrl }) => {
-  const { gameState, status, errorMessage, sendAction } = useFirestoreStage({
+  const { gameState, status, errorMessage, sendAction, retryConnection } = useFirestoreStage({
     requestedStageId: initialStageFromUrl,
   });
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [liveSecondsLeft, setLiveSecondsLeft] = useState(10);
+  const [showSlowConnectHelp, setShowSlowConnectHelp] = useState(false);
 
   // Transient FX states on IFP
   const [strikeOverlay, setStrikeOverlay] = useState<{
@@ -89,6 +91,18 @@ export const IfpDisplayPage: React.FC<IfpDisplayPageProps> = ({ initialStageFrom
   const lastHandledEventIdRef = useRef<string | null>(null);
   const hasInitialSyncRef = useRef(false);
   const lastTickSecondRef = useRef<number | null>(null);
+
+  // Show manual retry helper if initial Firestore connection takes too long
+  useEffect(() => {
+    if (gameState || status === 'error') {
+      setShowSlowConnectHelp(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setShowSlowConnectHelp(true);
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, [gameState, status]);
 
   // Sync mute state two-way with Firestore
   useEffect(() => {
@@ -183,10 +197,18 @@ export const IfpDisplayPage: React.FC<IfpDisplayPageProps> = ({ initialStageFrom
   if (status === 'error') {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-300 gap-4 p-6 text-center">
-        <div className="p-4 rounded-2xl bg-rose-950/70 border border-rose-500/50 max-w-md space-y-2">
+        <div className="p-5 rounded-2xl bg-rose-950/70 border border-rose-500/50 max-w-md space-y-3">
           <AlertTriangle className="w-8 h-8 text-rose-400 mx-auto" />
           <h2 className="text-base font-bold text-white">Gagal Terhubung ke Stage Firestore</h2>
           <p className="text-xs text-rose-200">{errorMessage}</p>
+          <button
+            type="button"
+            onClick={retryConnection}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Coba Hubungkan Ulang</span>
+          </button>
         </div>
       </div>
     );
@@ -194,9 +216,27 @@ export const IfpDisplayPage: React.FC<IfpDisplayPageProps> = ({ initialStageFrom
 
   if (!gameState) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-300 gap-3 p-6">
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-300 gap-4 p-6 text-center">
         <div className="h-10 w-10 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
         <p className="text-sm font-medium text-slate-400">Menyiapkan Layar IFP Family 100 HGN...</p>
+        {showSlowConnectHelp && (
+          <div className="max-w-sm space-y-3 pt-2">
+            <p className="text-xs text-slate-400">
+              Koneksi Firestore memakan waktu lebih lama dari biasanya. Pastikan internet aktif dan tidak terblokir firewall/adblocker.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setShowSlowConnectHelp(false);
+                retryConnection();
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Coba Hubungkan Ulang</span>
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -208,12 +248,9 @@ export const IfpDisplayPage: React.FC<IfpDisplayPageProps> = ({ initialStageFrom
         isReady={status === 'connected'}
         defaultTeamA={gameState.teams.teamA.name}
         defaultTeamB={gameState.teams.teamB.name}
-        onUpdateTeamName={(teamId, name) => {
-          void sendAction('UPDATE_TEAM_NAME', { teamId, name });
-        }}
-        onStartGame={(nameA, nameB) => {
+        onStartGame={async (nameA, nameB) => {
+          await sendAction('START_GAME', { teamAName: nameA, teamBName: nameB });
           soundFx.playCorrect();
-          void sendAction('START_GAME', { teamAName: nameA, teamBName: nameB });
         }}
       />
     );

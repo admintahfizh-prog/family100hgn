@@ -58,17 +58,25 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
   const [matches, setMatches] = useState<MatchRecord[]>([]);
   const [status, setStatus] = useState<SyncStatus>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const stageDocRef = useRef<StageDocument | null>(null);
+  const rawStageDocRef = useRef<Record<string, unknown> | null>(null);
   const creatingStageRef = useRef<string | null>(null);
+  const actionQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     stageDocRef.current = stageDoc;
   }, [stageDoc]);
 
+  const retryConnection = useCallback(() => {
+    setRetryNonce((prev) => prev + 1);
+  }, []);
+
   useEffect(() => {
     if (!isAuthReady || !user || !effectiveStageId) {
       setStatus('idle');
       setStageDoc(null);
+      rawStageDocRef.current = null;
       setMatches([]);
       return;
     }
@@ -83,6 +91,9 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
       docRef,
       async (snapshot) => {
         if (!snapshot.exists()) {
+          if (snapshot.metadata.fromCache) {
+            return;
+          }
           if (effectiveStageId === user.uid) {
             if (creatingStageRef.current === effectiveStageId) return;
             creatingStageRef.current = effectiveStageId;
@@ -110,6 +121,7 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
         }
 
         const raw = snapshot.data() as Record<string, unknown>;
+        rawStageDocRef.current = { ...raw };
         const normalizedState = normalizeGameState(raw);
         const data: StageDocument = {
           ...normalizedState,
@@ -170,79 +182,109 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
       unsubscribeStage();
       if (unsubscribeMatches) unsubscribeMatches();
     };
-  }, [isAuthReady, user, effectiveStageId]);
+  }, [isAuthReady, user, effectiveStageId, retryNonce]);
 
   const sendAction = useCallback(
-    async (action: string, payload: Record<string, unknown> = {}) => {
-      if (!user || !effectiveStageId) return;
-      const stagePath = `stages/${effectiveStageId}`;
-      const docRef = doc(db, 'stages', effectiveStageId);
+    (action: string, payload: Record<string, unknown> = {}) => {
+      const run = async () => {
+        if (!user || !effectiveStageId) return;
+        const stagePath = `stages/${effectiveStageId}`;
+        const docRef = doc(db, 'stages', effectiveStageId);
 
-      let raw: Record<string, unknown> | null = null;
-      try {
-        const snap = await getDoc(docRef);
-        if (!snap.exists()) return;
-        raw = snap.data() as Record<string, unknown>;
-      } catch (err) {
-        handleFirestoreError(err, OperationType.GET, stagePath);
-      }
+        let raw: Record<string, unknown> | null = rawStageDocRef.current
+          ? { ...rawStageDocRef.current }
+          : null;
 
-      if (!raw) return;
+        if (!raw) {
+          try {
+            const snap = await getDoc(docRef);
+            if (!snap.exists()) return;
+            raw = snap.data() as Record<string, unknown>;
+            rawStageDocRef.current = { ...raw };
+          } catch (err) {
+            handleFirestoreError(err, OperationType.GET, stagePath);
+          }
+        }
 
-      const normalizedCurrent = normalizeGameState(raw);
-      const nextGameState = applyGameAction(normalizedCurrent, action, payload);
-      if (!nextGameState) return;
+        if (!raw) return;
 
-      try {
-        if (!isStageMetadataComplete(raw) && raw.ownerId === user.uid) {
-          const safePin =
-            typeof raw.mcPin === 'string' && /^\d{4,6}$/.test(raw.mcPin) ? raw.mcPin : '2511';
-          const safeEmails = Array.isArray(raw.allowedEmails)
-            ? raw.allowedEmails
-                .filter((e): e is string => typeof e === 'string' && e.trim().length > 0)
-                .map((e) => e.trim().toLowerCase().slice(0, 120))
-                .slice(0, 10)
-            : [];
+        const prevRawSnapshot = { ...raw };
+        const normalizedCurrent = normalizeGameState(raw);
+        const nextGameState = applyGameAction(normalizedCurrent, action, payload);
+        if (!nextGameState) return;
 
-          const repairPatch: Record<string, unknown> = {
-            ...nextGameState,
-            mcPin: safePin,
-            allowedEmails: safeEmails,
+        try {
+          if (!isStageMetadataComplete(raw) && raw.ownerId === user.uid) {
+            const safePin =
+              typeof raw.mcPin === 'string' && /^\d{4,6}$/.test(raw.mcPin) ? raw.mcPin : '2511';
+            const safeEmails = Array.isArray(raw.allowedEmails)
+              ? raw.allowedEmails
+                  .filter((e): e is string => typeof e === 'string' && e.trim().length > 0)
+                  .map((e) => e.trim().toLowerCase().slice(0, 120))
+                  .slice(0, 10)
+              : [];
+
+            const repairPatch: Record<string, unknown> = {
+              ...nextGameState,
+              mcPin: safePin,
+              allowedEmails: safeEmails,
+              updatedBy: user.uid,
+              updatedAt: serverTimestamp(),
+            };
+
+            if (!isFirestoreTimestampLike(raw.createdAt)) {
+              repairPatch.createdAt = serverTimestamp();
+            }
+
+            const cleanedRaw: Record<string, unknown> = {
+              ...raw,
+              ...nextGameState,
+              mcPin: safePin,
+              allowedEmails: safeEmails,
+              updatedBy: user.uid,
+            };
+
+            for (const existingKey of Object.keys(raw)) {
+              if (!(STAGE_REQUIRED_KEYS as readonly string[]).includes(existingKey)) {
+                repairPatch[existingKey] = deleteField();
+                delete cleanedRaw[existingKey];
+              }
+            }
+
+            rawStageDocRef.current = cleanedRaw;
+            await updateDoc(docRef, repairPatch);
+            return;
+          }
+
+          const patch: Record<string, unknown> = {
             updatedBy: user.uid,
             updatedAt: serverTimestamp(),
           };
+          const optimisticRaw: Record<string, unknown> = {
+            ...raw,
+            updatedBy: user.uid,
+          };
 
-          if (!isFirestoreTimestampLike(raw.createdAt)) {
-            repairPatch.createdAt = serverTimestamp();
-          }
-
-          for (const existingKey of Object.keys(raw)) {
-            if (!(STAGE_REQUIRED_KEYS as readonly string[]).includes(existingKey)) {
-              repairPatch[existingKey] = deleteField();
+          for (const key of GAMEPLAY_SYNC_KEYS) {
+            const prevSerialized = JSON.stringify(raw[key] ?? null);
+            const nextSerialized = JSON.stringify(nextGameState[key] ?? null);
+            if (!(key in raw) || prevSerialized !== nextSerialized) {
+              patch[key] = nextGameState[key];
+              optimisticRaw[key] = nextGameState[key];
             }
           }
 
-          await updateDoc(docRef, repairPatch);
-          return;
+          rawStageDocRef.current = optimisticRaw;
+          await updateDoc(docRef, patch);
+        } catch (err) {
+          rawStageDocRef.current = prevRawSnapshot;
+          handleFirestoreError(err, OperationType.UPDATE, stagePath);
         }
+      };
 
-        const patch: Record<string, unknown> = {
-          updatedBy: user.uid,
-          updatedAt: serverTimestamp(),
-        };
-
-        for (const key of GAMEPLAY_SYNC_KEYS) {
-          const prevSerialized = JSON.stringify(raw[key] ?? null);
-          const nextSerialized = JSON.stringify(nextGameState[key] ?? null);
-          if (!(key in raw) || prevSerialized !== nextSerialized) {
-            patch[key] = nextGameState[key];
-          }
-        }
-
-        await updateDoc(docRef, patch);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, stagePath);
-      }
+      const nextTask = actionQueueRef.current.then(run, run);
+      actionQueueRef.current = nextTask.catch(() => {});
+      return nextTask;
     },
     [user, effectiveStageId]
   );
@@ -269,6 +311,31 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
       }
 
       try {
+        const snap = await getDoc(docRef);
+        if (!snap.exists()) return;
+        const raw = snap.data() as Record<string, unknown>;
+
+        if (!isStageMetadataComplete(raw) && raw.ownerId === user.uid) {
+          const normalized = normalizeGameState(raw);
+          const repairPatch: Record<string, unknown> = {
+            ...normalized,
+            mcPin: nextPin,
+            allowedEmails: nextEmails,
+            updatedBy: user.uid,
+            updatedAt: serverTimestamp(),
+          };
+          if (!isFirestoreTimestampLike(raw.createdAt)) {
+            repairPatch.createdAt = serverTimestamp();
+          }
+          for (const existingKey of Object.keys(raw)) {
+            if (!(STAGE_REQUIRED_KEYS as readonly string[]).includes(existingKey)) {
+              repairPatch[existingKey] = deleteField();
+            }
+          }
+          await updateDoc(docRef, repairPatch);
+          return;
+        }
+
         await updateDoc(docRef, {
           mcPin: nextPin,
           allowedEmails: nextEmails,
@@ -343,5 +410,6 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
     updateStageSettings,
     saveMatchRecord,
     deleteMatchRecord,
+    retryConnection,
   };
 }
