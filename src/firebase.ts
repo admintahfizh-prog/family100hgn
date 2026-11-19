@@ -8,24 +8,41 @@ import {
 } from 'firebase/firestore';
 import defaultFirebaseConfig from '../firebase-applet-config.json';
 
-function envOrDefault(envVal: unknown, fallback: string): string {
-  return typeof envVal === 'string' && envVal.trim() ? envVal.trim() : fallback;
+function envStr(envVal: unknown): string {
+  return typeof envVal === 'string' ? envVal.trim() : '';
+}
+
+const envProjectId = envStr(import.meta.env.VITE_FIREBASE_PROJECT_ID);
+const hasProvisionedConfig = Boolean(
+  defaultFirebaseConfig.projectId &&
+    defaultFirebaseConfig.projectId !== 'remixed-project-id' &&
+    defaultFirebaseConfig.firestoreDatabaseId
+);
+const useCustomProjectEnv =
+  !hasProvisionedConfig ||
+  Boolean(envProjectId && envProjectId !== defaultFirebaseConfig.projectId);
+
+function resolveField(envVal: unknown, fallback: string): string {
+  if (!useCustomProjectEnv && fallback) {
+    return fallback;
+  }
+  const trimmed = envStr(envVal);
+  return trimmed || fallback;
 }
 
 export const firebaseConfig = {
-  apiKey: envOrDefault(import.meta.env.VITE_FIREBASE_API_KEY, defaultFirebaseConfig.apiKey),
-  authDomain: envOrDefault(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN, defaultFirebaseConfig.authDomain),
-  projectId: envOrDefault(import.meta.env.VITE_FIREBASE_PROJECT_ID, defaultFirebaseConfig.projectId),
-  storageBucket: envOrDefault(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET, defaultFirebaseConfig.storageBucket),
-  messagingSenderId: envOrDefault(
+  apiKey: resolveField(import.meta.env.VITE_FIREBASE_API_KEY, defaultFirebaseConfig.apiKey),
+  authDomain: resolveField(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN, defaultFirebaseConfig.authDomain),
+  projectId: resolveField(import.meta.env.VITE_FIREBASE_PROJECT_ID, defaultFirebaseConfig.projectId),
+  storageBucket: resolveField(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET, defaultFirebaseConfig.storageBucket),
+  messagingSenderId: resolveField(
     import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
     defaultFirebaseConfig.messagingSenderId
   ),
-  appId: envOrDefault(import.meta.env.VITE_FIREBASE_APP_ID, defaultFirebaseConfig.appId),
-  firestoreDatabaseId: envOrDefault(
-    import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID,
-    defaultFirebaseConfig.firestoreDatabaseId
-  ),
+  appId: resolveField(import.meta.env.VITE_FIREBASE_APP_ID, defaultFirebaseConfig.appId),
+  firestoreDatabaseId: useCustomProjectEnv
+    ? envStr(import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID) || '(default)'
+    : defaultFirebaseConfig.firestoreDatabaseId,
 };
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
