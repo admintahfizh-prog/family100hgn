@@ -62,6 +62,9 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
   const stageDocRef = useRef<StageDocument | null>(null);
   const rawStageDocRef = useRef<Record<string, unknown> | null>(null);
   const creatingStageRef = useRef<string | null>(null);
+  const creatingPromiseRef = useRef<Promise<void> | null>(null);
+  const hasServerSnapshotRef = useRef<boolean>(false);
+  const serverConfirmedCompleteRef = useRef<boolean>(false);
   const actionQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
@@ -77,12 +80,17 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
       setStatus('idle');
       setStageDoc(null);
       rawStageDocRef.current = null;
+      creatingPromiseRef.current = null;
+      hasServerSnapshotRef.current = false;
+      serverConfirmedCompleteRef.current = false;
       setMatches([]);
       return;
     }
 
     setStatus('connecting');
     setErrorMessage(null);
+    hasServerSnapshotRef.current = false;
+    serverConfirmedCompleteRef.current = false;
 
     const stagePath = `stages/${effectiveStageId}`;
     const docRef = doc(db, 'stages', effectiveStageId);
@@ -97,20 +105,26 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
           if (effectiveStageId === user.uid) {
             if (creatingStageRef.current === effectiveStageId) return;
             creatingStageRef.current = effectiveStageId;
-            try {
-              const initial = createInitialStageDocument(user.uid, '2511');
-              await setDoc(docRef, {
-                ...initial,
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-              });
-            } catch (err) {
-              setStatus('error');
-              setErrorMessage('Gagal membuat panggung game di Firestore.');
-              handleFirestoreError(err, OperationType.CREATE, stagePath);
-            } finally {
-              creatingStageRef.current = null;
-            }
+            const createTask = (async () => {
+              try {
+                const initial = createInitialStageDocument(user.uid, '2511');
+                await setDoc(docRef, {
+                  ...initial,
+                  createdAt: serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                });
+                serverConfirmedCompleteRef.current = true;
+              } catch (err) {
+                setStatus('error');
+                setErrorMessage('Gagal membuat panggung game di Firestore.');
+                handleFirestoreError(err, OperationType.CREATE, stagePath);
+              } finally {
+                creatingStageRef.current = null;
+                creatingPromiseRef.current = null;
+              }
+            })();
+            creatingPromiseRef.current = createTask;
+            await createTask;
           } else {
             setStatus('error');
             setErrorMessage(
@@ -121,7 +135,24 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
         }
 
         const raw = snapshot.data() as Record<string, unknown>;
-        rawStageDocRef.current = { ...raw };
+        const isPendingLocal = snapshot.metadata.hasPendingWrites;
+        if (!isPendingLocal) {
+          hasServerSnapshotRef.current = true;
+          serverConfirmedCompleteRef.current = isStageMetadataComplete(raw);
+        }
+
+        const prevRaw = rawStageDocRef.current;
+        const mergedRaw: Record<string, unknown> = { ...raw };
+        if (isPendingLocal && prevRaw) {
+          if (!isFirestoreTimestampLike(mergedRaw.createdAt) && isFirestoreTimestampLike(prevRaw.createdAt)) {
+            mergedRaw.createdAt = prevRaw.createdAt;
+          }
+          if (!isFirestoreTimestampLike(mergedRaw.updatedAt) && isFirestoreTimestampLike(prevRaw.updatedAt)) {
+            mergedRaw.updatedAt = prevRaw.updatedAt;
+          }
+        }
+        rawStageDocRef.current = mergedRaw;
+
         const normalizedState = normalizeGameState(raw);
         const data: StageDocument = {
           ...normalizedState,
@@ -131,8 +162,8 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
             ? raw.allowedEmails.filter((e): e is string => typeof e === 'string').slice(0, 10)
             : [],
           updatedBy: typeof raw.updatedBy === 'string' ? raw.updatedBy : effectiveStageId,
-          createdAt: raw.createdAt,
-          updatedAt: raw.updatedAt,
+          createdAt: mergedRaw.createdAt,
+          updatedAt: mergedRaw.updatedAt,
         };
         setStageDoc(data);
         setStatus('connected');
@@ -188,6 +219,10 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
     (action: string, payload: Record<string, unknown> = {}) => {
       const run = async () => {
         if (!user || !effectiveStageId) return;
+        if (creatingPromiseRef.current) {
+          await creatingPromiseRef.current.catch(() => {});
+        }
+
         const stagePath = `stages/${effectiveStageId}`;
         const docRef = doc(db, 'stages', effectiveStageId);
 
@@ -200,6 +235,10 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
             const snap = await getDoc(docRef);
             if (!snap.exists()) return;
             raw = snap.data() as Record<string, unknown>;
+            if (!snap.metadata.hasPendingWrites) {
+              hasServerSnapshotRef.current = true;
+              serverConfirmedCompleteRef.current = isStageMetadataComplete(raw);
+            }
             rawStageDocRef.current = { ...raw };
           } catch (err) {
             handleFirestoreError(err, OperationType.GET, stagePath);
@@ -213,8 +252,14 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
         const nextGameState = applyGameAction(normalizedCurrent, action, payload);
         if (!nextGameState) return;
 
+        const needsLegacyRepair =
+          hasServerSnapshotRef.current &&
+          !serverConfirmedCompleteRef.current &&
+          !isStageMetadataComplete(raw) &&
+          raw.ownerId === user.uid;
+
         try {
-          if (!isStageMetadataComplete(raw) && raw.ownerId === user.uid) {
+          if (needsLegacyRepair) {
             const safePin =
               typeof raw.mcPin === 'string' && /^\d{4,6}$/.test(raw.mcPin) ? raw.mcPin : '2511';
             const safeEmails = Array.isArray(raw.allowedEmails)
@@ -253,6 +298,7 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
 
             rawStageDocRef.current = cleanedRaw;
             await updateDoc(docRef, repairPatch);
+            serverConfirmedCompleteRef.current = true;
             return;
           }
 
@@ -292,6 +338,9 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
   const updateStageSettings = useCallback(
     async (updates: { mcPin?: string; allowedEmails?: string[] }) => {
       if (!user || !effectiveStageId) return;
+      if (creatingPromiseRef.current) {
+        await creatingPromiseRef.current.catch(() => {});
+      }
       const current = stageDocRef.current;
       if (!current || current.ownerId !== user.uid) return;
 
@@ -314,8 +363,13 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
         const snap = await getDoc(docRef);
         if (!snap.exists()) return;
         const raw = snap.data() as Record<string, unknown>;
+        const shouldRepair =
+          !snap.metadata.hasPendingWrites &&
+          !serverConfirmedCompleteRef.current &&
+          !isStageMetadataComplete(raw) &&
+          raw.ownerId === user.uid;
 
-        if (!isStageMetadataComplete(raw) && raw.ownerId === user.uid) {
+        if (shouldRepair) {
           const normalized = normalizeGameState(raw);
           const repairPatch: Record<string, unknown> = {
             ...normalized,
@@ -333,6 +387,7 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
             }
           }
           await updateDoc(docRef, repairPatch);
+          serverConfirmedCompleteRef.current = true;
           return;
         }
 
