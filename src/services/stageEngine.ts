@@ -35,7 +35,18 @@ function sanitizeEvent(event: Omit<GameEvent, 'id'>): GameEvent {
 }
 
 export function createInitialGameState(): GameState {
-  const questionOrder = INITIAL_QUESTIONS.map((_, i) => i);
+  const babak1Indices: number[] = [];
+  const otherIndices: number[] = [];
+  INITIAL_QUESTIONS.forEach((q, i) => {
+    if (q.round === 'BABAK_1') {
+      babak1Indices.push(i);
+    } else {
+      otherIndices.push(i);
+    }
+  });
+  const shuffledBabak1 = [...babak1Indices].sort(() => Math.random() - 0.5);
+  const shuffledOthers = [...otherIndices].sort(() => Math.random() - 0.5);
+  const questionOrder = [...shuffledBabak1, ...shuffledOthers];
   return {
     currentQuestionIndex: 0,
     revealedAnswerIds: [],

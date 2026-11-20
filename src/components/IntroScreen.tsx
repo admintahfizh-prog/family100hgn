@@ -30,6 +30,7 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
   const [teamBName, setTeamBName] = useState(defaultTeamB || 'Tim R.A. Kartini');
   const [isStarting, setIsStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [showAlurModal, setShowAlurModal] = useState(false);
 
   useEffect(() => {
     if (defaultTeamA) setTeamAName(defaultTeamA);
@@ -152,12 +153,12 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
             </div>
           )}
 
-          {/* Launch Button */}
-          <div className="pt-2 space-y-2">
+          {/* Launch Buttons */}
+          <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
             <button
               type="submit"
               disabled={!isReady || isStarting}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-3 px-10 py-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-condensed font-black text-2xl tracking-wider uppercase shadow-[0_0_35px_rgba(245,158,11,0.6)] transition-all transform hover:scale-105 active:scale-95 disabled:opacity-50 cursor-pointer"
+              className="flex-1 min-w-[240px] inline-flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-condensed font-black text-xl sm:text-2xl tracking-wider uppercase shadow-[0_0_35px_rgba(245,158,11,0.6)] transition-all transform hover:scale-105 active:scale-95 disabled:opacity-50 cursor-pointer"
             >
               <Monitor className="w-6 h-6" />
               <span>
@@ -167,6 +168,15 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
                   ? 'MEMBUKA LAYAR IFP...'
                   : 'TAMPILKAN LAYAR IFP'}
               </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowAlurModal(true)}
+              className="inline-flex items-center justify-center gap-2 px-6 py-4 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-bold text-sm uppercase tracking-wide transition-colors cursor-pointer shadow-md"
+            >
+              <BookOpen className="w-5 h-5 text-amber-400" />
+              <span>Alur &amp; Peraturan</span>
             </button>
           </div>
         </form>
@@ -189,6 +199,55 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
           </span>
         </div>
       </div>
+
+      {/* Full Screen Alur & Peraturan Modal */}
+      {showAlurModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-xl flex flex-col p-4 sm:p-6 overflow-y-auto">
+          <div className="max-w-7xl w-full mx-auto flex items-center justify-between pb-4 border-b border-slate-800 shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-amber-400/20 text-amber-400 border border-amber-400/40">
+                <BookOpen className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="font-condensed font-black text-2xl text-amber-300 uppercase tracking-wide">
+                  Alur &amp; Peraturan Permainan Family 100
+                </h2>
+                <p className="text-xs text-slate-400">Panduan lengkap teknis lomba &amp; penilaian</p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowAlurModal(false)}
+              className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm flex items-center gap-2 shadow-lg cursor-pointer transition-colors"
+            >
+              <Monitor className="w-4 h-4" />
+              <span>Kembali ke Halaman Awal</span>
+            </button>
+          </div>
+
+          <div className="flex-1 flex items-center justify-center p-2 sm:p-6">
+            <div className="relative max-w-6xl w-full rounded-2xl border-2 border-amber-400/60 bg-slate-900 shadow-[0_0_50px_rgba(245,158,11,0.3)] overflow-hidden">
+              <img
+                src="/assets/aistudio/Alur___Peraturan_Permainan_Family_100_9bc077f0.png"
+                alt="Alur dan Peraturan Permainan Family 100"
+                className="w-full h-auto object-contain max-h-[80vh]"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          </div>
+
+          <div className="pt-4 text-center shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowAlurModal(false)}
+              className="px-8 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-sm cursor-pointer shadow"
+            >
+              Kembali ke Halaman Awal
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
