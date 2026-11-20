@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { INITIAL_QUESTIONS } from '../data/questions.ts';
 import quizBackdropImg from '../assets/images/hgn_quiz_backdrop_1794450301211.jpg';
-import stageEmblemImg from '../assets/images/hgn_stage_emblem_1794450299460.jpg';
+const mainIconUrl = '/assets/aistudio/family_100_eb236ce7.jpeg';
 import {
   Trophy,
   Sparkles,
@@ -50,7 +50,7 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('Missing or insufficient permissions')) {
         setStartError(
-          'Izin Firestore ditolak. Pastikan Anda login dengan akun Google pemilik stage atau Co-Host yang terdaftar.'
+          'Izin Firestore ditolak. Periksa aturan keamanan Firestore atau coba muat ulang halaman.'
         );
       } else {
         setStartError(
@@ -85,8 +85,8 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({
         <div className="mx-auto mb-4 flex items-center justify-center">
           <div className="relative h-24 w-24 sm:h-32 sm:w-32 rounded-full p-1 bg-gradient-to-br from-amber-400 via-yellow-200 to-amber-600 shadow-[0_0_40px_rgba(245,158,11,0.6)]">
             <img
-              src={stageEmblemImg}
-              alt="Logo Hari Guru Nasional"
+              src={mainIconUrl}
+              alt="Logo Family 100"
               className="w-full h-full object-cover rounded-full"
               referrerPolicy="no-referrer"
             />

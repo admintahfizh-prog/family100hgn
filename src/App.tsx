@@ -1,12 +1,12 @@
 /**
  * FAMILY 100 – SPECIAL HARI GURU NASIONAL (HGN)
- * Multi-Device Architecture (Vercel + Firebase Firestore):
+ * Multi-Device Architecture (Vercel + Firebase Firestore, Direct No-Login Sync):
  *  - `/`   -> Pure IFP Display (Soal, Hasil Survei, Kelompok — tanpa kode MC)
  *  - `/mc` -> Secret PIN-protected MC Control Dashboard
  */
 
 import { useEffect, useState } from 'react';
-import { FirebaseProvider, AuthGate } from './contexts/FirebaseAuthContext.tsx';
+import { FirebaseProvider } from './contexts/FirebaseAuthContext.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { IfpDisplayPage } from './pages/IfpDisplayPage.tsx';
 import { McControlPage } from './pages/McControlPage.tsx';
@@ -44,24 +44,15 @@ export default function App() {
   return (
     <ErrorBoundary>
       <FirebaseProvider>
-        <AuthGate
-          title={route.mode === 'mc' ? 'Kontrol MC Family 100 HGN' : 'Family 100 – Special HGN'}
-          subtitle={
-            route.mode === 'mc'
-              ? 'Masuk dengan akun Google untuk menghubungkan dashboard MC secara real-time dengan layar IFP melalui Firebase.'
-              : 'Masuk dengan akun Google untuk menghubungkan layar IFP ke Firebase Firestore dan sinkronisasi dengan perangkat MC.'
-          }
-        >
-          {route.mode === 'mc' ? (
-            <McControlPage
-              initialPinFromUrl={route.pin}
-              initialStageFromUrl={route.stage}
-              onNavigateToIfp={navigateToIfp}
-            />
-          ) : (
-            <IfpDisplayPage initialStageFromUrl={route.stage} />
-          )}
-        </AuthGate>
+        {route.mode === 'mc' ? (
+          <McControlPage
+            initialPinFromUrl={route.pin}
+            initialStageFromUrl={route.stage}
+            onNavigateToIfp={navigateToIfp}
+          />
+        ) : (
+          <IfpDisplayPage initialStageFromUrl={route.stage} />
+        )}
       </FirebaseProvider>
     </ErrorBoundary>
   );

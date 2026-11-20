@@ -7,7 +7,7 @@
       "properties": {
         "ownerId": {
           "type": "string",
-          "description": "UID of the organizer/teacher who owns this stage.",
+          "description": "Stage creator or host device identifier.",
           "maxLength": 128
         },
         "mcPin": {
@@ -19,7 +19,7 @@
         },
         "allowedEmails": {
           "type": "array",
-          "description": "Bounded list (max 10) of verified co-host Google emails allowed to control MC or view the stage."
+          "description": "Optional bounded metadata list kept for schema compatibility."
         },
         "phase": {
           "type": "string",

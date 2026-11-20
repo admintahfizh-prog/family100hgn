@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection,
   deleteDoc,
@@ -14,7 +14,6 @@ import {
   limit,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase.ts';
-import { useFirebaseAuth } from '../contexts/FirebaseAuthContext.tsx';
 import type { GameState, MatchRecord, StageDocument } from '../types/game.ts';
 import {
   applyGameAction,
@@ -29,6 +28,33 @@ export type SyncStatus = 'idle' | 'connecting' | 'connected' | 'error';
 
 interface UseFirestoreStageOptions {
   requestedStageId?: string | null;
+}
+
+const DEFAULT_STAGE_ID = 'main-stage';
+const CLIENT_ID_STORAGE_KEY = 'hgn_family100_client_id';
+const VALID_STAGE_ID_REGEX = /^[a-zA-Z0-9_-]{1,128}$/;
+
+function resolveStageId(requested?: string | null): string {
+  const trimmed = requested?.trim() || '';
+  if (trimmed && VALID_STAGE_ID_REGEX.test(trimmed)) {
+    return trimmed;
+  }
+  return DEFAULT_STAGE_ID;
+}
+
+function getClientActorId(): string {
+  if (typeof window === 'undefined') return 'stage-host';
+  try {
+    const existing = window.localStorage.getItem(CLIENT_ID_STORAGE_KEY);
+    if (existing && VALID_STAGE_ID_REGEX.test(existing)) {
+      return existing;
+    }
+    const generated = `host-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    window.localStorage.setItem(CLIENT_ID_STORAGE_KEY, generated);
+    return generated;
+  } catch {
+    return 'stage-host';
+  }
 }
 
 const GAMEPLAY_SYNC_KEYS: (keyof GameState)[] = [
@@ -51,12 +77,12 @@ const GAMEPLAY_SYNC_KEYS: (keyof GameState)[] = [
 ];
 
 export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions = {}) {
-  const { user, isAuthReady } = useFirebaseAuth();
-  const effectiveStageId = requestedStageId?.trim() || user?.uid || null;
+  const effectiveStageId = resolveStageId(requestedStageId);
+  const actorId = useMemo(() => getClientActorId(), []);
 
   const [stageDoc, setStageDoc] = useState<StageDocument | null>(null);
   const [matches, setMatches] = useState<MatchRecord[]>([]);
-  const [status, setStatus] = useState<SyncStatus>('idle');
+  const [status, setStatus] = useState<SyncStatus>('connecting');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const stageDocRef = useRef<StageDocument | null>(null);
@@ -76,19 +102,10 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
   }, []);
 
   useEffect(() => {
-    if (!isAuthReady || !user || !effectiveStageId) {
-      setStatus('idle');
-      setStageDoc(null);
-      rawStageDocRef.current = null;
-      creatingPromiseRef.current = null;
-      hasServerSnapshotRef.current = false;
-      serverConfirmedCompleteRef.current = false;
-      setMatches([]);
-      return;
-    }
-
     setStatus('connecting');
     setErrorMessage(null);
+    rawStageDocRef.current = null;
+    creatingPromiseRef.current = null;
     hasServerSnapshotRef.current = false;
     serverConfirmedCompleteRef.current = false;
 
@@ -102,35 +119,29 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
           if (snapshot.metadata.fromCache) {
             return;
           }
-          if (effectiveStageId === user.uid) {
-            if (creatingStageRef.current === effectiveStageId) return;
-            creatingStageRef.current = effectiveStageId;
-            const createTask = (async () => {
-              try {
-                const initial = createInitialStageDocument(user.uid, '2511');
-                await setDoc(docRef, {
-                  ...initial,
-                  createdAt: serverTimestamp(),
-                  updatedAt: serverTimestamp(),
-                });
-                serverConfirmedCompleteRef.current = true;
-              } catch (err) {
-                setStatus('error');
-                setErrorMessage('Gagal membuat panggung game di Firestore.');
-                handleFirestoreError(err, OperationType.CREATE, stagePath);
-              } finally {
-                creatingStageRef.current = null;
-                creatingPromiseRef.current = null;
-              }
-            })();
-            creatingPromiseRef.current = createTask;
-            await createTask;
-          } else {
-            setStatus('error');
-            setErrorMessage(
-              'Stage tidak ditemukan atau akun Google Anda belum didaftarkan sebagai Co-Host oleh pemilik stage.'
-            );
-          }
+          if (creatingStageRef.current === effectiveStageId) return;
+          creatingStageRef.current = effectiveStageId;
+          const createTask = (async () => {
+            try {
+              const initial = createInitialStageDocument('public-stage', '2511');
+              await setDoc(docRef, {
+                ...initial,
+                updatedBy: actorId,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              });
+              serverConfirmedCompleteRef.current = true;
+            } catch (err) {
+              setStatus('error');
+              setErrorMessage('Gagal membuat panggung game di Firestore.');
+              handleFirestoreError(err, OperationType.CREATE, stagePath);
+            } finally {
+              creatingStageRef.current = null;
+              creatingPromiseRef.current = null;
+            }
+          })();
+          creatingPromiseRef.current = createTask;
+          await createTask;
           return;
         }
 
@@ -156,12 +167,12 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
         const normalizedState = normalizeGameState(raw);
         const data: StageDocument = {
           ...normalizedState,
-          ownerId: typeof raw.ownerId === 'string' ? raw.ownerId : effectiveStageId,
+          ownerId: typeof raw.ownerId === 'string' && raw.ownerId.trim() ? raw.ownerId : 'public-stage',
           mcPin: typeof raw.mcPin === 'string' && /^\d{4,6}$/.test(raw.mcPin) ? raw.mcPin : '2511',
           allowedEmails: Array.isArray(raw.allowedEmails)
             ? raw.allowedEmails.filter((e): e is string => typeof e === 'string').slice(0, 10)
             : [],
-          updatedBy: typeof raw.updatedBy === 'string' ? raw.updatedBy : effectiveStageId,
+          updatedBy: typeof raw.updatedBy === 'string' && raw.updatedBy.trim() ? raw.updatedBy : actorId,
           createdAt: mergedRaw.createdAt,
           updatedAt: mergedRaw.updatedAt,
         };
@@ -172,53 +183,48 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
       (err) => {
         setStatus('error');
         setErrorMessage(
-          'Akses ditolak atau koneksi Firestore terputus. Pastikan akun Google memiliki izin ke stage ini.'
+          'Gagal terhubung ke Firebase Firestore. Pastikan koneksi internet aktif dan aturan database sudah benar.'
         );
         handleFirestoreError(err, OperationType.GET, stagePath);
       }
     );
 
     const matchesPath = `stages/${effectiveStageId}/matches`;
-    let unsubscribeMatches: (() => void) | null = null;
+    const matchesQuery = query(
+      collection(db, 'stages', effectiveStageId, 'matches'),
+      where('stageId', '==', effectiveStageId),
+      limit(50)
+    );
 
-    if (effectiveStageId === user.uid) {
-      const matchesQuery = query(
-        collection(db, 'stages', effectiveStageId, 'matches'),
-        where('ownerId', '==', user.uid),
-        limit(50)
-      );
-
-      unsubscribeMatches = onSnapshot(
-        matchesQuery,
-        (snap) => {
-          const list: MatchRecord[] = snap.docs
-            .map((d) => ({
-              id: d.id,
-              ...(d.data() as Omit<MatchRecord, 'id'>),
-            }))
-            .sort((a, b) => {
-              const aSec = (a.createdAt as { seconds?: number } | undefined)?.seconds ?? 0;
-              const bSec = (b.createdAt as { seconds?: number } | undefined)?.seconds ?? 0;
-              return bSec - aSec;
-            });
-          setMatches(list);
-        },
-        (err) => {
-          handleFirestoreError(err, OperationType.LIST, matchesPath);
-        }
-      );
-    }
+    const unsubscribeMatches = onSnapshot(
+      matchesQuery,
+      (snap) => {
+        const list: MatchRecord[] = snap.docs
+          .map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<MatchRecord, 'id'>),
+          }))
+          .sort((a, b) => {
+            const aSec = (a.createdAt as { seconds?: number } | undefined)?.seconds ?? 0;
+            const bSec = (b.createdAt as { seconds?: number } | undefined)?.seconds ?? 0;
+            return bSec - aSec;
+          });
+        setMatches(list);
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, matchesPath);
+      }
+    );
 
     return () => {
       unsubscribeStage();
-      if (unsubscribeMatches) unsubscribeMatches();
+      unsubscribeMatches();
     };
-  }, [isAuthReady, user, effectiveStageId, retryNonce]);
+  }, [effectiveStageId, actorId, retryNonce]);
 
   const sendAction = useCallback(
     (action: string, payload: Record<string, unknown> = {}) => {
       const run = async () => {
-        if (!user || !effectiveStageId) return;
         if (creatingPromiseRef.current) {
           await creatingPromiseRef.current.catch(() => {});
         }
@@ -255,11 +261,14 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
         const needsLegacyRepair =
           hasServerSnapshotRef.current &&
           !serverConfirmedCompleteRef.current &&
-          !isStageMetadataComplete(raw) &&
-          raw.ownerId === user.uid;
+          !isStageMetadataComplete(raw);
 
         try {
           if (needsLegacyRepair) {
+            const safeOwnerId =
+              typeof raw.ownerId === 'string' && raw.ownerId.trim()
+                ? raw.ownerId.trim().slice(0, 128)
+                : 'public-stage';
             const safePin =
               typeof raw.mcPin === 'string' && /^\d{4,6}$/.test(raw.mcPin) ? raw.mcPin : '2511';
             const safeEmails = Array.isArray(raw.allowedEmails)
@@ -273,9 +282,13 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
               ...nextGameState,
               mcPin: safePin,
               allowedEmails: safeEmails,
-              updatedBy: user.uid,
+              updatedBy: actorId,
               updatedAt: serverTimestamp(),
             };
+
+            if (typeof raw.ownerId !== 'string' || !raw.ownerId.trim()) {
+              repairPatch.ownerId = safeOwnerId;
+            }
 
             if (!isFirestoreTimestampLike(raw.createdAt)) {
               repairPatch.createdAt = serverTimestamp();
@@ -284,9 +297,10 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
             const cleanedRaw: Record<string, unknown> = {
               ...raw,
               ...nextGameState,
+              ownerId: safeOwnerId,
               mcPin: safePin,
               allowedEmails: safeEmails,
-              updatedBy: user.uid,
+              updatedBy: actorId,
             };
 
             for (const existingKey of Object.keys(raw)) {
@@ -303,12 +317,12 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
           }
 
           const patch: Record<string, unknown> = {
-            updatedBy: user.uid,
+            updatedBy: actorId,
             updatedAt: serverTimestamp(),
           };
           const optimisticRaw: Record<string, unknown> = {
             ...raw,
-            updatedBy: user.uid,
+            updatedBy: actorId,
           };
 
           for (const key of GAMEPLAY_SYNC_KEYS) {
@@ -332,17 +346,16 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
       actionQueueRef.current = nextTask.catch(() => {});
       return nextTask;
     },
-    [user, effectiveStageId]
+    [effectiveStageId, actorId]
   );
 
   const updateStageSettings = useCallback(
     async (updates: { mcPin?: string; allowedEmails?: string[] }) => {
-      if (!user || !effectiveStageId) return;
       if (creatingPromiseRef.current) {
         await creatingPromiseRef.current.catch(() => {});
       }
       const current = stageDocRef.current;
-      if (!current || current.ownerId !== user.uid) return;
+      if (!current) return;
 
       const stagePath = `stages/${effectiveStageId}`;
       const docRef = doc(db, 'stages', effectiveStageId);
@@ -366,18 +379,24 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
         const shouldRepair =
           !snap.metadata.hasPendingWrites &&
           !serverConfirmedCompleteRef.current &&
-          !isStageMetadataComplete(raw) &&
-          raw.ownerId === user.uid;
+          !isStageMetadataComplete(raw);
 
         if (shouldRepair) {
           const normalized = normalizeGameState(raw);
+          const safeOwnerId =
+            typeof raw.ownerId === 'string' && raw.ownerId.trim()
+              ? raw.ownerId.trim().slice(0, 128)
+              : 'public-stage';
           const repairPatch: Record<string, unknown> = {
             ...normalized,
             mcPin: nextPin,
             allowedEmails: nextEmails,
-            updatedBy: user.uid,
+            updatedBy: actorId,
             updatedAt: serverTimestamp(),
           };
+          if (typeof raw.ownerId !== 'string' || !raw.ownerId.trim()) {
+            repairPatch.ownerId = safeOwnerId;
+          }
           if (!isFirestoreTimestampLike(raw.createdAt)) {
             repairPatch.createdAt = serverTimestamp();
           }
@@ -394,19 +413,19 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
         await updateDoc(docRef, {
           mcPin: nextPin,
           allowedEmails: nextEmails,
-          updatedBy: user.uid,
+          updatedBy: actorId,
           updatedAt: serverTimestamp(),
         });
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, stagePath);
       }
     },
-    [user, effectiveStageId]
+    [effectiveStageId, actorId]
   );
 
   const saveMatchRecord = useCallback(async () => {
     const current = stageDocRef.current;
-    if (!user || !effectiveStageId || !current) return null;
+    if (!current) return null;
 
     const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const matchPath = `stages/${effectiveStageId}/matches/${matchId}`;
@@ -421,7 +440,7 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
 
     try {
       await setDoc(doc(db, 'stages', effectiveStageId, 'matches', matchId), {
-        ownerId: user.uid,
+        ownerId: actorId,
         stageId: effectiveStageId,
         teamAName: teamA.name.slice(0, 80),
         teamAScore: Math.max(0, Math.trunc(teamA.score)),
@@ -436,11 +455,10 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, matchPath);
     }
-  }, [user, effectiveStageId]);
+  }, [effectiveStageId, actorId]);
 
   const deleteMatchRecord = useCallback(
     async (matchId: string) => {
-      if (!user || !effectiveStageId) return;
       const matchPath = `stages/${effectiveStageId}/matches/${matchId}`;
       try {
         await deleteDoc(doc(db, 'stages', effectiveStageId, 'matches', matchId));
@@ -448,7 +466,7 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
         handleFirestoreError(err, OperationType.DELETE, matchPath);
       }
     },
-    [user, effectiveStageId]
+    [effectiveStageId]
   );
 
   const gameState: GameState | null = stageDoc;
@@ -460,7 +478,7 @@ export function useFirestoreStage({ requestedStageId }: UseFirestoreStageOptions
     matches,
     status,
     errorMessage,
-    isOwner: Boolean(user && stageDoc && stageDoc.ownerId === user.uid),
+    isOwner: Boolean(stageDoc),
     sendAction,
     updateStageSettings,
     saveMatchRecord,

@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { INITIAL_QUESTIONS } from '../data/questions.ts';
 import type { SoundEffectName, SurveyAnswer } from '../types/game.ts';
 import { useFirestoreStage } from '../hooks/useFirestoreStage.ts';
-import { useFirebaseAuth } from '../contexts/FirebaseAuthContext.tsx';
 import { getLiveTimerSeconds } from '../services/stageEngine.ts';
 import { firebaseConfig } from '../firebase.ts';
 import { matchUserAnswer } from '../services/fuzzyMatch.ts';
@@ -59,7 +58,6 @@ export const McControlPage: React.FC<McControlPageProps> = ({
   initialStageFromUrl,
   onNavigateToIfp,
 }) => {
-  const { user, signOutUser } = useFirebaseAuth();
   const [overrideStageId, setOverrideStageId] = useState<string | undefined>(initialStageFromUrl);
   const [stageInput, setStageInput] = useState(initialStageFromUrl || '');
   const [showStageSwitch, setShowStageSwitch] = useState(false);
@@ -76,6 +74,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
     updateStageSettings,
     saveMatchRecord,
     deleteMatchRecord,
+    retryConnection,
   } = useFirestoreStage({
     requestedStageId: overrideStageId,
   });
@@ -100,7 +99,6 @@ export const McControlPage: React.FC<McControlPageProps> = ({
   // Firebase / Vercel Settings & Match History modal
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [newPinInput, setNewPinInput] = useState('');
-  const [coHostEmailInput, setCoHostEmailInput] = useState('');
   const [settingsMsg, setSettingsMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [copiedLinkType, setCopiedLinkType] = useState<'mc' | 'ifp' | 'stage' | null>(null);
   const [isSavingMatch, setIsSavingMatch] = useState(false);
@@ -236,14 +234,39 @@ export const McControlPage: React.FC<McControlPageProps> = ({
     setPinError(null);
   };
 
+  const dispatchAction = async (
+    action: string,
+    payload: Record<string, unknown> = {},
+    successFeedback?: { text: string; type: 'success' | 'warning' | 'error' }
+  ) => {
+    try {
+      await sendAction(action, payload);
+      if (successFeedback) {
+        setFeedback(successFeedback);
+      }
+    } catch (err) {
+      let detail = err instanceof Error ? err.message : 'Gagal mengirim perintah ke Firebase.';
+      try {
+        const parsed = JSON.parse(detail) as { error?: string };
+        if (parsed?.error) detail = parsed.error;
+      } catch {
+        // use raw message
+      }
+      setFeedback({
+        text: `Gagal sinkron ke Layar IFP (${action}): ${detail}`,
+        type: 'error',
+      });
+    }
+  };
+
   const handleSpinLottery = () => {
     if (lotteryTimerRef.current) {
       clearTimeout(lotteryTimerRef.current);
     }
-    void sendAction('LOTTERY_SPIN');
+    void dispatchAction('LOTTERY_SPIN');
     lotteryTimerRef.current = setTimeout(() => {
       const winner: 'teamA' | 'teamB' = Math.random() > 0.5 ? 'teamA' : 'teamB';
-      void sendAction('LOTTERY_FINISH', { winner });
+      void dispatchAction('LOTTERY_FINISH', { winner });
     }, 1700);
   };
 
@@ -304,53 +327,6 @@ export const McControlPage: React.FC<McControlPageProps> = ({
     }
   };
 
-  const handleAddCoHost = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!stageDoc) return;
-    const cleanEmail = coHostEmailInput.trim().toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      setSettingsMsg({ text: 'Masukkan alamat email Google yang valid.', ok: false });
-      return;
-    }
-    if (stageDoc.allowedEmails.includes(cleanEmail)) {
-      setSettingsMsg({ text: 'Email sudah terdaftar sebagai Co-Host.', ok: false });
-      return;
-    }
-    if (stageDoc.allowedEmails.length >= 10) {
-      setSettingsMsg({ text: 'Maksimal 10 email Co-Host per stage.', ok: false });
-      return;
-    }
-    try {
-      await updateStageSettings({
-        allowedEmails: [...stageDoc.allowedEmails, cleanEmail],
-      });
-      setCoHostEmailInput('');
-      setSettingsMsg({
-        text: `${cleanEmail} ditambahkan sebagai Co-Host MC/IFP.`,
-        ok: true,
-      });
-    } catch (err) {
-      setSettingsMsg({
-        text: err instanceof Error ? err.message : 'Gagal menambahkan Co-Host.',
-        ok: false,
-      });
-    }
-  };
-
-  const handleRemoveCoHost = async (email: string) => {
-    if (!stageDoc) return;
-    try {
-      await updateStageSettings({
-        allowedEmails: stageDoc.allowedEmails.filter((e) => e !== email),
-      });
-    } catch (err) {
-      setSettingsMsg({
-        text: err instanceof Error ? err.message : 'Gagal menghapus Co-Host.',
-        ok: false,
-      });
-    }
-  };
-
   const handleSaveMatch = async () => {
     setIsSavingMatch(true);
     setSettingsMsg(null);
@@ -399,10 +375,10 @@ export const McControlPage: React.FC<McControlPageProps> = ({
             </button>
             <button
               type="button"
-              onClick={signOutUser}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
+              onClick={retryConnection}
+              className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold cursor-pointer"
             >
-              Ganti Akun Google
+              Hubungkan Ulang
             </button>
           </div>
         </div>
@@ -428,7 +404,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
             Masukkan kode PIN MC (default awal: <span className="font-mono text-amber-300 font-bold">2511</span>) untuk membuka panel kendali permainan yang terhubung ke Firebase Firestore.
           </p>
           <p className="text-[11px] text-slate-500 mb-6 truncate">
-            Akun aktif: <span className="text-slate-300 font-semibold">{user?.email}</span>
+            Stage aktif: <span className="text-amber-300 font-mono font-semibold">{stageId}</span>
           </p>
 
           {pinError && (
@@ -472,20 +448,20 @@ export const McControlPage: React.FC<McControlPageProps> = ({
             >
               {showStageSwitch
                 ? 'Sembunyikan pilihan Stage ID'
-                : 'Layar IFP pakai akun Google berbeda? Hubungkan via Stage ID'}
+                : 'Pakai ruang/Stage ID khusus? Ganti Stage ID'}
             </button>
 
             {showStageSwitch && (
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-left space-y-2">
                 <label className="block text-[11px] font-bold text-slate-400">
-                  Tempel Stage ID atau Link MC dari Pemilik Stage (menu &ldquo;Firebase, PIN &amp; Riwayat&rdquo;):
+                  Masukkan Stage ID atau tempel Link MC (default: main-stage):
                 </label>
                 <div className="flex gap-2">
                   <input
                     type="text"
                     value={stageInput}
                     onChange={(e) => setStageInput(e.target.value)}
-                    placeholder="Contoh: 4XDJI1zYlfa8..."
+                    placeholder="Contoh: main-stage"
                     className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400"
                   />
                   <button
@@ -507,7 +483,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
               </div>
             )}
 
-            <div className="flex items-center justify-between gap-3 pt-1">
+            <div className="flex items-center justify-center pt-1">
               <button
                 type="button"
                 onClick={onNavigateToIfp}
@@ -515,14 +491,6 @@ export const McControlPage: React.FC<McControlPageProps> = ({
               >
                 <Monitor className="w-3.5 h-3.5" />
                 <span>Buka Tampilan Layar IFP</span>
-              </button>
-              <button
-                type="button"
-                onClick={signOutUser}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-300 transition-colors cursor-pointer"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Ganti Akun</span>
               </button>
             </div>
           </div>
@@ -548,27 +516,29 @@ export const McControlPage: React.FC<McControlPageProps> = ({
 
     if (result.matchedAnswer) {
       if (result.isAlreadyRevealed) {
-        void sendAction('SOUNDBOARD', { sound: 'bell' });
-        setFeedback({
+        void dispatchAction('SOUNDBOARD', { sound: 'bell' }, {
           text: `Jawaban "${result.matchedAnswer.text}" SUDAH TERBUKA sebelumnya!`,
           type: 'warning',
         });
       } else {
-        void sendAction('REVEAL_ANSWER', {
-          answerId: result.matchedAnswer.id,
-          givePoints: true,
-        });
-        setFeedback({
-          text: `BENAR! #${result.matchedAnswer.rank}: "${result.matchedAnswer.text}" (+${
-            result.matchedAnswer.points * gameState.roundMultiplier
-          } poin untuk ${activeTeam.name})`,
-          type: 'success',
-        });
+        void dispatchAction(
+          'REVEAL_ANSWER',
+          {
+            answerId: result.matchedAnswer.id,
+            givePoints: true,
+          },
+          {
+            text: `BENAR! #${result.matchedAnswer.rank}: "${result.matchedAnswer.text}" (+${
+              result.matchedAnswer.points * gameState.roundMultiplier
+            } poin untuk ${activeTeam.name})`,
+            type: 'success',
+          }
+        );
       }
     } else {
-      void sendAction('ADD_STRIKE');
-      setFeedback({
-        text: `SALAH! "${answerInput}" tidak ada di survei. Tambah ❌ untuk ${activeTeam.name}.`,
+      const typed = answerInput;
+      void dispatchAction('ADD_STRIKE', {}, {
+        text: `SALAH! "${typed}" tidak ada di survei. Tambah ❌ untuk ${activeTeam.name}.`,
         type: 'error',
       });
     }
@@ -578,13 +548,16 @@ export const McControlPage: React.FC<McControlPageProps> = ({
 
   const handleManualReveal = (ans: SurveyAnswer, givePoints: boolean) => {
     if (gameState.revealedAnswerIds.includes(ans.id)) return;
-    void sendAction('REVEAL_ANSWER', { answerId: ans.id, givePoints });
-    setFeedback({
-      text: `Membuka #${ans.rank}: "${ans.text}" ${
-        givePoints ? `(+${ans.points * gameState.roundMultiplier} poin ke ${activeTeam.name})` : '(tanpa poin)'
-      }`,
-      type: givePoints ? 'success' : 'warning',
-    });
+    void dispatchAction(
+      'REVEAL_ANSWER',
+      { answerId: ans.id, givePoints },
+      {
+        text: `Membuka #${ans.rank}: "${ans.text}" ${
+          givePoints ? `(+${ans.points * gameState.roundMultiplier} poin ke ${activeTeam.name})` : '(tanpa poin)'
+        }`,
+        type: givePoints ? 'success' : 'warning',
+      }
+    );
   };
 
   return (
@@ -607,7 +580,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
                 </span>
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-400">
-                <span>{user?.email}</span>
+                <span>Stage: <span className="font-mono text-amber-300">{stageId}</span></span>
                 <span>·</span>
                 <span className={status === 'connected' ? 'text-emerald-400 font-semibold' : 'text-amber-400'}>
                   {status === 'connected' ? 'Firestore Real-time OK' : 'Menghubungkan...'}
@@ -781,7 +754,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
             <button
               type="button"
               onClick={() =>
-                void sendAction('START_GAME', { teamAName: introTeamA, teamBName: introTeamB })
+                void dispatchAction('START_GAME', { teamAName: introTeamA, teamBName: introTeamB })
               }
               className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-condensed font-black text-xl uppercase tracking-wider shadow-lg flex items-center justify-center gap-2 cursor-pointer"
             >
@@ -850,7 +823,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
                 <div className="grid grid-cols-2 gap-2 pt-1">
                   <button
                     type="button"
-                    onClick={() => void sendAction('ADD_STRIKE')}
+                    onClick={() => void dispatchAction('ADD_STRIKE')}
                     className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow cursor-pointer"
                   >
                     <XCircle className="w-4 h-4" />
@@ -1019,7 +992,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
                     </span>
                     <button
                       type="button"
-                      onClick={() => void sendAction('REVEAL_ALL')}
+                      onClick={() => void dispatchAction('REVEAL_ALL')}
                       className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-semibold flex items-center gap-1 cursor-pointer"
                     >
                       <Eye className="w-3.5 h-3.5" />
@@ -1065,7 +1038,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    void sendAction('HIDE_ANSWER', {
+                                    void dispatchAction('HIDE_ANSWER', {
                                       answerId: ans.id,
                                       deductPoints: false,
                                     })
@@ -1471,78 +1444,33 @@ export const McControlPage: React.FC<McControlPageProps> = ({
               </div>
             </div>
 
-            {/* Owner-only PIN & Co-Host management */}
+            {/* MC PIN management */}
             {isOwner && stageDoc && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <form
-                  onSubmit={handleUpdatePin}
-                  className="rounded-2xl bg-slate-950 border border-slate-800 p-4 space-y-2.5"
-                >
-                  <label className="block text-xs font-bold text-slate-300 uppercase">
-                    Ubah PIN MC (Saat ini: <span className="font-mono text-amber-300">{stageDoc.mcPin}</span>)
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={6}
-                      value={newPinInput}
-                      onChange={(e) => setNewPinInput(e.target.value.replace(/\D/g, ''))}
-                      placeholder="PIN baru 4-6 digit"
-                      className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none focus:border-amber-400"
-                    />
-                    <button
-                      type="submit"
-                      className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs cursor-pointer"
-                    >
-                      Simpan
-                    </button>
-                  </div>
-                </form>
-
-                <form
-                  onSubmit={handleAddCoHost}
-                  className="rounded-2xl bg-slate-950 border border-slate-800 p-4 space-y-2.5"
-                >
-                  <label className="block text-xs font-bold text-slate-300 uppercase">
-                    Co-Host Email Google ({stageDoc.allowedEmails.length}/10)
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="email"
-                      value={coHostEmailInput}
-                      onChange={(e) => setCoHostEmailInput(e.target.value)}
-                      placeholder="panitia@sekolah.sch.id"
-                      className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none focus:border-amber-400"
-                    />
-                    <button
-                      type="submit"
-                      className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs cursor-pointer"
-                    >
-                      Tambah
-                    </button>
-                  </div>
-                  {stageDoc.allowedEmails.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {stageDoc.allowedEmails.map((em) => (
-                        <span
-                          key={em}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-[11px] text-slate-300"
-                        >
-                          <span>{em}</span>
-                          <button
-                            type="button"
-                            onClick={() => void handleRemoveCoHost(em)}
-                            className="text-rose-400 hover:text-rose-300 cursor-pointer"
-                          >
-                            ✕
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </form>
-              </div>
+              <form
+                onSubmit={handleUpdatePin}
+                className="rounded-2xl bg-slate-950 border border-slate-800 p-4 space-y-2.5"
+              >
+                <label className="block text-xs font-bold text-slate-300 uppercase">
+                  Ubah PIN MC (Saat ini: <span className="font-mono text-amber-300">{stageDoc.mcPin}</span>)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={newPinInput}
+                    onChange={(e) => setNewPinInput(e.target.value.replace(/\D/g, ''))}
+                    placeholder="PIN baru 4-6 digit"
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none focus:border-amber-400"
+                  />
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs cursor-pointer"
+                  >
+                    Simpan
+                  </button>
+                </div>
+              </form>
             )}
 
             {/* Match History (Firestore subcollection) */}
@@ -1597,14 +1525,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
               )}
             </div>
 
-            <div className="flex items-center justify-between pt-1">
-              <button
-                type="button"
-                onClick={signOutUser}
-                className="text-xs text-rose-400 hover:text-rose-300 font-semibold cursor-pointer"
-              >
-                Keluar Akun Google
-              </button>
+            <div className="flex items-center justify-end pt-1">
               <button
                 type="button"
                 onClick={() => setShowSettingsModal(false)}
@@ -1639,7 +1560,7 @@ export const McControlPage: React.FC<McControlPageProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  void sendAction('RESET_GAME', { toIntro: false });
+                  void dispatchAction('RESET_GAME', { toIntro: false });
                   setShowResetConfirm(false);
                 }}
                 className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-sm font-bold cursor-pointer"

@@ -13,7 +13,7 @@ import { WinnerCelebration } from '../components/WinnerCelebration.tsx';
 import { ConfettiCanvas } from '../components/ConfettiCanvas.tsx';
 import { IntroScreen } from '../components/IntroScreen.tsx';
 import quizBackdropImg from '../assets/images/hgn_quiz_backdrop_1794450301211.jpg';
-import stageEmblemImg from '../assets/images/hgn_stage_emblem_1794450299460.jpg';
+const mainIconUrl = '/assets/aistudio/family_100_eb236ce7.jpeg';
 import {
   Zap,
   Volume2,
@@ -68,7 +68,7 @@ interface IfpDisplayPageProps {
 }
 
 export const IfpDisplayPage: React.FC<IfpDisplayPageProps> = ({ initialStageFromUrl }) => {
-  const { gameState, status, errorMessage, sendAction, retryConnection } = useFirestoreStage({
+  const { stageId, gameState, status, errorMessage, sendAction, retryConnection } = useFirestoreStage({
     requestedStageId: initialStageFromUrl,
   });
 
@@ -303,8 +303,8 @@ export const IfpDisplayPage: React.FC<IfpDisplayPageProps> = ({ initialStageFrom
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full p-0.5 bg-gradient-to-br from-amber-400 to-amber-600 shadow-md shrink-0">
               <img
-                src={stageEmblemImg}
-                alt="Emblem HGN"
+                src={mainIconUrl}
+                alt="Logo Family 100"
                 className="w-full h-full object-cover rounded-full"
                 referrerPolicy="no-referrer"
               />
@@ -319,7 +319,7 @@ export const IfpDisplayPage: React.FC<IfpDisplayPageProps> = ({ initialStageFrom
                 </span>
               </div>
               <p className="text-[11px] sm:text-xs text-slate-400 font-medium truncate hidden sm:block">
-                Lomba Guru &mdash; &ldquo;Guru Hebat, Indonesia Kuat!&rdquo;
+                Lomba Guru &mdash; &ldquo;Guru Hebat, Indonesia Kuat!&rdquo; <span className="text-slate-500">· Stage:</span> <span className="font-mono text-amber-300/80">{stageId}</span>
               </p>
             </div>
           </div>
